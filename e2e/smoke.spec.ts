@@ -114,6 +114,17 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     // Assert inside pixel reflects Fake Provider 50% red blend (red elevated, blue reduced)
     expect(inspection.centerData[0]).toBeGreaterThan(100);
     expect(inspection.centerData[2]).toBeLessThan(200);
+
+    // 8. Verify Run History and Projects persistence
+    await expect(page.getByText('Run History')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load Params' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'View Result' })).toBeVisible();
+
+    // Verify Projects modal opens and displays project
+    const projectsBtn = page.getByRole('button', { name: /Projects/i });
+    await projectsBtn.click();
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
+    await page.getByRole('button', { name: 'Close' }).click();
   });
 
   test('supports brush, eraser, clear mask, undo, and redo interactions', async ({ page }) => {

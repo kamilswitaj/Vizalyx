@@ -254,3 +254,76 @@
   border-radius: 6px;
   font-size: 0.9rem;
 }
+
+.runsSection {
+  border-top: 1px solid #444;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.runItem {
+  background: #1c1c1c;
+  border: 1px solid #383838;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.runItem:hover {
+  border-color: #555;
+}
+
+.runItemHeader {
+  display: flex;
+  justify-content: space-between;
+  color: #aaa;
+  font-size: 0.75rem;
+}
+
+.runItemMeta {
+  color: #7aa3ff;
+  font-weight: 500;
+}
+
+.runItemPrompt {
+  color: #eee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.runBtn {
+  flex: 1;
+  padding: 4px 6px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  color: #ccc;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.runBtn:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+

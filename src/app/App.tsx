@@ -4,8 +4,18 @@ import { FakeImageEditProvider } from '../providers/fake/FakeImageEditProvider';
 import { OpenAIImageEditProvider } from '../providers/openai/OpenAIImageEditProvider';
 import { ProviderRegistry } from '../providers/registry';
 import { SettingsModal } from '../settings/SettingsModal';
+import { ProjectListModal } from '../projects/ProjectListModal';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
 import { featherMask } from '../imaging/masks/featherMask';
+import { rasterMaskToBlob } from '../imaging/masks/maskExport';
+import {
+  createProject,
+  loadProject,
+  loadLatestProject,
+  saveRun,
+  getAssetBlob,
+} from '../persistence/indexeddb/projectRepository';
+import type { ProjectEntity, RunEntity } from '../persistence/indexeddb/database';
 import {
   applyOperation,
   clearMask,
@@ -77,6 +87,13 @@ export function App(): React.ReactElement {
   const [openAiKey, setOpenAiKey] = useState<string>('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Projects & History state
+  const [currentProject, setCurrentProject] = useState<ProjectEntity | null>(null);
+  const [runs, setRuns] = useState<RunEntity[]>([]);
+  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const currentProjectRef = useRef<ProjectEntity | null>(null);
+  currentProjectRef.current = currentProject;
+
   // Provider & Model configuration
   const descriptors = useMemo(() => registry.getDescriptors(), []);
   const [selectedProviderId, setSelectedProviderId] = useState<string>('fake');
@@ -138,7 +155,7 @@ export function App(): React.ReactElement {
     };
   }, []);
 
-  const loadImage = useCallback(async (blob: Blob) => {
+  const loadImage = useCallback(async (blob: Blob, existingProjectId?: string) => {
     // Cancel in-flight generation and invalidate generation ID
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -163,12 +180,49 @@ export function App(): React.ReactElement {
 
       setMaskState(createEmptyMask());
       setError(null);
+
+      // Create new project if not loading an existing one
+      if (!existingProjectId) {
+        try {
+          const loaded = await createProject(
+            `Project ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            blob,
+            bitmap.width,
+            bitmap.height
+          );
+          setCurrentProject(loaded.project);
+          setRuns([]);
+        } catch (dbErr) {
+          console.warn('Failed to save new project to IndexedDB:', dbErr);
+        }
+      }
+
       bitmap.close();
     } catch (err) {
       console.error('loadImage error:', err);
       setError('Failed to load image. Please use PNG, JPEG, or WebP.');
     }
   }, []);
+
+  // Restore latest project on mount
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      try {
+        const latest = await loadLatestProject();
+        if (mounted && latest) {
+          setCurrentProject(latest.project);
+          setRuns(latest.runs);
+          await loadImage(latest.sourceAsset.blob, latest.project.id);
+        }
+      } catch (err) {
+        console.warn('Could not load latest project from IndexedDB:', err);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [loadImage]);
 
   // Paste handler: find first image item in clipboard
   useEffect(() => {
@@ -347,6 +401,31 @@ export function App(): React.ReactElement {
         finalResultBlob: finalBlob,
         elapsedMilliseconds: editResult.elapsedMilliseconds,
       });
+
+      // Persist run in IndexedDB
+      const activeProj = currentProjectRef.current;
+      if (activeProj) {
+        try {
+          const maskPng = await rasterMaskToBlob(mask);
+          const savedRun = await saveRun({
+            projectId: activeProj.id,
+            providerId: selectedProviderId,
+            modelId: currentModelId,
+            quality: currentQuality,
+            prompt: prompt.trim(),
+            editMode: currentMode,
+            featherPixels: currentFeather,
+            maskBlob: maskPng,
+            providerResultBlob: editResult.resultBlob,
+            finalResultBlob: finalBlob,
+            elapsedMilliseconds: editResult.elapsedMilliseconds,
+            providerRequestId: editResult.providerRequestId,
+          });
+          setRuns(prev => [savedRun, ...prev]);
+        } catch (saveErr) {
+          console.warn('Failed to save run to IndexedDB:', saveErr);
+        }
+      }
     } catch (e: unknown) {
       if (generationIdRef.current !== currentGenId) {
         return;
@@ -394,6 +473,76 @@ export function App(): React.ReactElement {
     a.click();
   }, [result]);
 
+  // Project management handlers
+  const handleSelectProject = useCallback(
+    async (projectId: string) => {
+      try {
+        const loaded = await loadProject(projectId);
+        if (loaded) {
+          setCurrentProject(loaded.project);
+          setRuns(loaded.runs);
+          await loadImage(loaded.sourceAsset.blob, loaded.project.id);
+        }
+      } catch (err) {
+        console.error('Failed to switch project:', err);
+      }
+    },
+    [loadImage]
+  );
+
+  const handleNewProject = useCallback(() => {
+    setCurrentProject(null);
+    setRuns([]);
+    setSourceImage(prev => {
+      revokeSourceImageUrl(prev);
+      return null;
+    });
+    setMaskState(createEmptyMask());
+    setResult(prev => {
+      revokeResultUrls(prev);
+      return null;
+    });
+    setError(null);
+  }, []);
+
+  // Run history handlers
+  const handleRestoreRunParams = useCallback((run: RunEntity) => {
+    setPrompt(run.prompt);
+    setSelectedProviderId(run.providerId);
+    setSelectedModelId(run.modelId);
+    setSelectedQuality(run.quality);
+    setEditMode(run.editMode);
+    setFeatherPixels(run.featherPixels);
+  }, []);
+
+  const handleViewRunResult = useCallback(async (run: RunEntity) => {
+    try {
+      const pBlob = await getAssetBlob(run.providerResultAssetId);
+      const fBlob = await getAssetBlob(run.finalResultAssetId);
+      if (!pBlob || !fBlob) return;
+
+      const pUrl = URL.createObjectURL(pBlob);
+      const fUrl = run.editMode === 'strict-mask' ? URL.createObjectURL(fBlob) : pUrl;
+
+      setResult(prev => {
+        revokeResultUrls(prev);
+        return {
+          editMode: run.editMode,
+          providerId: run.providerId,
+          modelId: run.modelId,
+          quality: run.quality,
+          featherPixels: run.featherPixels,
+          providerResultUrl: pUrl,
+          finalResultUrl: fUrl,
+          finalResultBlob: fBlob,
+          elapsedMilliseconds: run.elapsedMilliseconds,
+        };
+      });
+    } catch (err) {
+      console.error('Failed to load run result assets:', err);
+    }
+  }, []);
+
   return (
     <div className={styles.layout} onDragOver={handleDragOver} onDrop={handleDrop}>
       {/* Toolbar */}
@@ -408,6 +557,9 @@ export function App(): React.ReactElement {
           style={{ display: 'none' }}
           onChange={handleFileInputChange}
         />
+        <button onClick={() => setIsProjectsOpen(true)}>
+          Projects {currentProject ? `(${currentProject.name.slice(0, 16)})` : ''}
+        </button>
         <span className={styles.toolbarHint}>or Ctrl+V / drag & drop</span>
         <button onClick={handleFitViewport} disabled={!sourceImage}>
           Fit
@@ -524,7 +676,7 @@ export function App(): React.ReactElement {
           )}
         </main>
 
-        {/* Right panel: Edit & Generate */}
+        {/* Right panel: Edit & Generate & History */}
         <aside className={styles.rightPanel}>
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Provider</label>
@@ -687,6 +839,44 @@ export function App(): React.ReactElement {
               </button>
             </div>
           )}
+
+          {/* Run History */}
+          {runs.length > 0 && (
+            <div className={styles.runsSection}>
+              <label className={styles.panelLabel}>
+                Run History <span>({runs.length})</span>
+              </label>
+              <div className={styles.runList}>
+                {runs.map(run => (
+                  <div key={run.id} className={styles.runItem}>
+                    <div className={styles.runItemHeader}>
+                      <span className={styles.runItemMeta}>{run.modelId}</span>
+                      <span>{new Date(run.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <div className={styles.runItemPrompt} title={run.prompt}>
+                      {run.prompt}
+                    </div>
+                    <div className={styles.runActions}>
+                      <button
+                        className={styles.runBtn}
+                        onClick={() => handleRestoreRunParams(run)}
+                        title="Restore prompt and generation settings"
+                      >
+                        Load Params
+                      </button>
+                      <button
+                        className={styles.runBtn}
+                        onClick={() => handleViewRunResult(run)}
+                        title="View this run's generated images"
+                      >
+                        View Result
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </aside>
       </div>
 
@@ -697,6 +887,15 @@ export function App(): React.ReactElement {
         openAiKey={openAiKey}
         onSaveKey={setOpenAiKey}
         openAiProvider={openAiProvider}
+      />
+
+      {/* Projects Modal */}
+      <ProjectListModal
+        isOpen={isProjectsOpen}
+        activeProjectId={currentProject?.id}
+        onClose={() => setIsProjectsOpen(false)}
+        onSelectProject={handleSelectProject}
+        onNewProject={handleNewProject}
       />
     </div>
   );
