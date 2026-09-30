@@ -11,6 +11,7 @@ interface Props {
   maskState: MaskState;
   maskOpacity: number;
   onMaskOperation: (op: MaskOperation) => void;
+  isDrawingDisabled?: boolean;
 }
 
 export function EditorCanvas({
@@ -20,6 +21,7 @@ export function EditorCanvas({
   maskState,
   maskOpacity,
   onMaskOperation,
+  isDrawingDisabled = false,
 }: Props): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -147,7 +149,7 @@ export function EditorCanvas({
         lastPanPos.current = { x: evt.clientX, y: evt.clientY };
         return;
       }
-      if (evt.button !== 0) return; // Only primary button for drawing
+      if (evt.button !== 0 || isDrawingDisabled) return; // Only primary button for drawing when not disabled
 
       // Left button = rectangle draw
       const transform = getViewportTransform();
@@ -158,7 +160,7 @@ export function EditorCanvas({
       setIsDrawing(true);
       isDrawingRef.current = true;
     },
-    [getViewportTransform]
+    [getViewportTransform, isDrawingDisabled]
   );
 
   // Global mousemove and mouseup listeners to prevent stuck drawing/panning

@@ -286,7 +286,13 @@ export function App(): React.ReactElement {
   }, [sourceImage, canGenerate, editMode, maskState, prompt]);
 
   const handleCancel = useCallback(() => {
-    abortControllerRef.current?.abort();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    generationIdRef.current++;
+    setIsGenerating(false);
+    setError('Generation cancelled.');
   }, []);
 
   const handleDownload = useCallback(() => {
@@ -312,12 +318,12 @@ export function App(): React.ReactElement {
           onChange={handleFileInputChange}
         />
         <span className={styles.toolbarHint}>or Ctrl+V / drag & drop</span>
-        <button onClick={handleUndo} disabled={maskState.historyIndex < 0}>
+        <button onClick={handleUndo} disabled={maskState.historyIndex < 0 || isGenerating}>
           Undo
         </button>
         <button
           onClick={handleRedo}
-          disabled={maskState.historyIndex >= maskState.operations.length - 1}
+          disabled={maskState.historyIndex >= maskState.operations.length - 1 || isGenerating}
         >
           Redo
         </button>
@@ -354,6 +360,7 @@ export function App(): React.ReactElement {
               maskState={maskState}
               maskOpacity={maskOpacity}
               onMaskOperation={handleMaskOperation}
+              isDrawingDisabled={isGenerating}
             />
           ) : (
             <div className={styles.dropZone}>
