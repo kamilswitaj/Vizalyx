@@ -23,9 +23,22 @@ export interface CredentialValidationResult {
   readonly error?: string;
 }
 
+/**
+ * Provider-independent internal raster mask representation.
+ * Vizalyx semantics:
+ *   0     = preserve original exactly
+ *   255   = editable
+ *   1-254 = partial blend / feather
+ */
+export interface RasterMask {
+  readonly width: number;
+  readonly height: number;
+  readonly data: Uint8ClampedArray;
+}
+
 export interface ImageEditRequest {
   readonly sourceBlob: Blob;
-  readonly maskBlob: Blob;
+  readonly mask: RasterMask;
   readonly referenceBlobs: Blob[];
   readonly prompt: string;
   readonly modelId: string;

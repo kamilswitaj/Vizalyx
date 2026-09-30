@@ -2,8 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { EditorCanvas } from '../editor/canvas/EditorCanvas';
 import { FakeImageEditProvider } from '../providers/fake/FakeImageEditProvider';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
-import { applyOperation, createEmptyMask, MaskState, rasterizeMask, undo, redo } from '../editor/mask/maskModel';
-import type { ImageEditRequest } from '../providers/contracts/types';
+import {
+  applyOperation,
+  createEmptyMask,
+  MaskState,
+  rasterizeMask,
+  undo,
+  redo,
+} from '../editor/mask/maskModel';
+import type { ImageEditRequest, RasterMask } from '../providers/contracts/types';
 import styles from './App.module.css';
 
 type EditMode = 'ai-mask' | 'strict-mask';
@@ -16,6 +23,7 @@ interface SourceImage {
 }
 
 interface GenerateResult {
+  editMode: EditMode;
   providerResultUrl: string;
   finalResultUrl: string;
   finalResultBlob: Blob;
@@ -23,6 +31,23 @@ interface GenerateResult {
 }
 
 const fakeProvider = new FakeImageEditProvider();
+
+function revokeResultUrls(res: GenerateResult | null) {
+  if (!res) return;
+  if (res.providerResultUrl) {
+    URL.revokeObjectURL(res.providerResultUrl);
+  }
+  if (res.finalResultUrl && res.finalResultUrl !== res.providerResultUrl) {
+    URL.revokeObjectURL(res.finalResultUrl);
+  }
+}
+
+function revokeSourceImageUrl(source: SourceImage | null) {
+  if (!source) return;
+  if (source.objectUrl) {
+    URL.revokeObjectURL(source.objectUrl);
+  }
+}
 
 export function App(): React.ReactElement {
   const [sourceImage, setSourceImage] = useState<SourceImage | null>(null);
@@ -33,40 +58,71 @@ export function App(): React.ReactElement {
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Cleanup object URLs
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const generationIdRef = useRef(0);
+
+  // Store refs for unmount cleanup
+  const sourceImageRef = useRef<SourceImage | null>(null);
+  sourceImageRef.current = sourceImage;
+  const resultRef = useRef<GenerateResult | null>(null);
+  resultRef.current = result;
+
+  // Cleanup object URLs on unmount
   useEffect(() => {
     return () => {
-      if (sourceImage) URL.revokeObjectURL(sourceImage.objectUrl);
+      revokeSourceImageUrl(sourceImageRef.current);
+      revokeResultUrls(resultRef.current);
     };
-  }, [sourceImage]);
+  }, []);
 
   const loadImage = useCallback(async (blob: Blob) => {
+    // Cancel in-flight generation and invalidate generation ID
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    generationIdRef.current++;
+    setIsGenerating(false);
+
     try {
       const bitmap = await createImageBitmap(blob);
       const url = URL.createObjectURL(blob);
-      if (sourceImage) {
-        URL.revokeObjectURL(sourceImage.objectUrl);
-      }
-      setSourceImage({ blob, width: bitmap.width, height: bitmap.height, objectUrl: url });
+
+      setSourceImage(prev => {
+        revokeSourceImageUrl(prev);
+        return { blob, width: bitmap.width, height: bitmap.height, objectUrl: url };
+      });
+
+      setResult(prev => {
+        revokeResultUrls(prev);
+        return null;
+      });
+
       setMaskState(createEmptyMask());
-      setResult(null);
       setError(null);
       bitmap.close();
-    } catch (e) {
+    } catch (err) {
+      console.error('loadImage error:', err);
       setError('Failed to load image. Please use PNG, JPEG, or WebP.');
     }
-  }, [sourceImage]);
+  }, []);
 
-  // Paste handler
+  // Paste handler: find first image item in clipboard
   useEffect(() => {
     const handler = async (e: ClipboardEvent) => {
-      const item = e.clipboardData?.items[0];
-      if (!item) return;
-      if (!item.type.startsWith('image/')) return;
-      const blob = item.getAsFile();
-      if (blob) await loadImage(blob);
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item && item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            await loadImage(blob);
+            break;
+          }
+        }
+      }
     };
     window.addEventListener('paste', handler);
     return () => window.removeEventListener('paste', handler);
@@ -77,25 +133,38 @@ export function App(): React.ReactElement {
     e.preventDefault();
   }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      await loadImage(file);
-    }
-  }, [loadImage]);
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      const files = e.dataTransfer.files;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file && file.type.startsWith('image/')) {
+          await loadImage(file);
+          break;
+        }
+      }
+    },
+    [loadImage]
+  );
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // File open
   const handleFileOpen = useCallback(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/png,image/jpeg,image/webp';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (file) await loadImage(file);
-    };
-    input.click();
-  }, [loadImage]);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileInputChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        await loadImage(file);
+      }
+      e.target.value = '';
+    },
+    [loadImage]
+  );
 
   // Mask operations from canvas
   const handleMaskOperation = useCallback((op: Parameters<typeof applyOperation>[1]) => {
@@ -112,37 +181,30 @@ export function App(): React.ReactElement {
     if (!sourceImage || !canGenerate) return;
     setIsGenerating(true);
     setError(null);
-    setResult(null);
 
+    // Clear and revoke previous result
+    setResult(prev => {
+      revokeResultUrls(prev);
+      return null;
+    });
+
+    const currentGenId = ++generationIdRef.current;
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
+    const currentMode = editMode;
 
     try {
-      // Rasterize mask
+      // Rasterize mask only when required for generation/compositing
       const maskPixels = rasterizeMask(maskState, sourceImage.width, sourceImage.height);
-
-      // Convert mask to RGBA PNG blob for provider
-      const maskCanvas = new OffscreenCanvas(sourceImage.width, sourceImage.height);
-      const maskCtx = maskCanvas.getContext('2d');
-      if (!maskCtx) throw new Error('Cannot get mask canvas context');
-      const maskImageData = new ImageData(
-        new Uint8ClampedArray(maskPixels.length * 4),
-        sourceImage.width,
-        sourceImage.height
-      );
-      for (let i = 0; i < maskPixels.length; i++) {
-        const v = maskPixels[i]!;
-        maskImageData.data[i * 4] = v;
-        maskImageData.data[i * 4 + 1] = v;
-        maskImageData.data[i * 4 + 2] = v;
-        maskImageData.data[i * 4 + 3] = 255;
-      }
-      maskCtx.putImageData(maskImageData, 0, 0);
-      const maskBlob = await maskCanvas.convertToBlob({ type: 'image/png' });
+      const mask: RasterMask = {
+        width: sourceImage.width,
+        height: sourceImage.height,
+        data: maskPixels,
+      };
 
       const request: ImageEditRequest = {
         sourceBlob: sourceImage.blob,
-        maskBlob,
+        mask,
         referenceBlobs: [],
         prompt: prompt.trim(),
         modelId: 'fake-model',
@@ -151,10 +213,13 @@ export function App(): React.ReactElement {
 
       const editResult = await fakeProvider.edit(request, { apiKey: '' }, abortController.signal);
 
-      // If strict mask mode, composite
+      // Invalidate if source image changed or cancelled
+      if (generationIdRef.current !== currentGenId) {
+        return;
+      }
+
       let finalBlob: Blob;
-      if (editMode === 'strict-mask') {
-        // Decode original and result to pixel buffers
+      if (currentMode === 'strict-mask') {
         const origBitmap = await createImageBitmap(sourceImage.blob);
         const genBitmap = await createImageBitmap(editResult.resultBlob);
 
@@ -180,35 +245,45 @@ export function App(): React.ReactElement {
           sourceImage.height
         );
 
-        const finalImageData = new ImageData(composited as any, sourceImage.width, sourceImage.height);
+        const finalImageData = compCtx.createImageData(sourceImage.width, sourceImage.height);
+        finalImageData.data.set(composited);
         compCtx.putImageData(finalImageData, 0, 0);
         finalBlob = await compCanvas.convertToBlob({ type: 'image/png' });
       } else {
         finalBlob = editResult.resultBlob;
       }
 
+      if (generationIdRef.current !== currentGenId) {
+        return;
+      }
+
       const providerUrl = URL.createObjectURL(editResult.resultBlob);
-      const finalUrl = editMode === 'strict-mask'
-        ? URL.createObjectURL(finalBlob)
-        : providerUrl;
+      const finalUrl =
+        currentMode === 'strict-mask' ? URL.createObjectURL(finalBlob) : providerUrl;
 
       setResult({
+        editMode: currentMode,
         providerResultUrl: providerUrl,
         finalResultUrl: finalUrl,
         finalResultBlob: finalBlob,
         elapsedMilliseconds: editResult.elapsedMilliseconds,
       });
     } catch (e: unknown) {
+      if (generationIdRef.current !== currentGenId) {
+        return;
+      }
       if (e instanceof DOMException && e.name === 'AbortError') {
         setError('Generation cancelled.');
       } else {
         setError(e instanceof Error ? e.message : 'Generation failed');
       }
     } finally {
-      setIsGenerating(false);
-      abortControllerRef.current = null;
+      if (generationIdRef.current === currentGenId) {
+        setIsGenerating(false);
+        abortControllerRef.current = null;
+      }
     }
-  }, [sourceImage, maskState, prompt, editMode, canGenerate]);
+  }, [sourceImage, canGenerate, editMode, maskState, prompt]);
 
   const handleCancel = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -228,9 +303,24 @@ export function App(): React.ReactElement {
       <header className={styles.toolbar}>
         <span className={styles.logo}>Vizalyx</span>
         <button onClick={handleFileOpen}>Open</button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          data-testid="file-input"
+          accept="image/png,image/jpeg,image/webp"
+          style={{ display: 'none' }}
+          onChange={handleFileInputChange}
+        />
         <span className={styles.toolbarHint}>or Ctrl+V / drag & drop</span>
-        <button onClick={handleUndo} disabled={maskState.historyIndex < 0}>Undo</button>
-        <button onClick={handleRedo} disabled={maskState.historyIndex >= maskState.operations.length - 1}>Redo</button>
+        <button onClick={handleUndo} disabled={maskState.historyIndex < 0}>
+          Undo
+        </button>
+        <button
+          onClick={handleRedo}
+          disabled={maskState.historyIndex >= maskState.operations.length - 1}
+        >
+          Redo
+        </button>
       </header>
 
       <div className={styles.body}>
@@ -243,7 +333,10 @@ export function App(): React.ReactElement {
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Mask opacity</label>
             <input
-              type="range" min={0} max={1} step={0.05}
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
               value={maskOpacity}
               onChange={e => setMaskOpacity(parseFloat(e.target.value))}
               style={{ width: '100%' }}
@@ -291,58 +384,72 @@ export function App(): React.ReactElement {
             <label className={styles.panelLabel}>Mode</label>
             <label>
               <input
-                type="radio" name="mode" value="ai-mask"
+                type="radio"
+                name="mode"
+                value="ai-mask"
                 checked={editMode === 'ai-mask'}
                 onChange={() => setEditMode('ai-mask')}
-              />{' '}AI Mask
+              />{' '}
+              AI Mask
             </label>
             <label>
               <input
-                type="radio" name="mode" value="strict-mask"
+                type="radio"
+                name="mode"
+                value="strict-mask"
                 checked={editMode === 'strict-mask'}
                 onChange={() => setEditMode('strict-mask')}
-              />{' '}Strict Mask
+              />{' '}
+              Strict Mask
             </label>
           </div>
 
           <div className={styles.panelSection}>
             <div className={styles.privacyNote}>
-              Your API key (when configured) is used directly from the browser.
-              Images are sent directly to the selected AI provider when Generate is clicked.
+              Your API key (when configured) is used directly from the browser. Images are sent
+              directly to the selected AI provider when Generate is clicked.
             </div>
           </div>
 
           {error && <div className={styles.errorMsg}>{error}</div>}
 
           {!isGenerating ? (
-            <button
-              className={styles.generateBtn}
-              onClick={handleGenerate}
-              disabled={!canGenerate}
-            >
+            <button className={styles.generateBtn} onClick={handleGenerate} disabled={!canGenerate}>
               Generate
             </button>
           ) : (
             <>
-              <button className={styles.generateBtn} disabled>Generating...</button>
-              <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
+              <button className={styles.generateBtn} disabled>
+                Generating...
+              </button>
+              <button className={styles.cancelBtn} onClick={handleCancel}>
+                Cancel
+              </button>
             </>
           )}
 
           {result && (
             <div className={styles.resultSection}>
               <div className={styles.resultMeta}>
-                Done in {result.elapsedMilliseconds}ms
+                Done in {result.elapsedMilliseconds}ms ({result.editMode === 'strict-mask' ? 'Strict Mask' : 'AI Mask'})
               </div>
               <div className={styles.resultImages}>
                 <div>
                   <div className={styles.resultLabel}>Provider Result</div>
-                  <img src={result.providerResultUrl} alt="Provider result" className={styles.resultImg} />
+                  <img
+                    src={result.providerResultUrl}
+                    alt="Provider result"
+                    className={styles.resultImg}
+                  />
                 </div>
-                {editMode === 'strict-mask' && (
+                {result.editMode === 'strict-mask' && (
                   <div>
                     <div className={styles.resultLabel}>Final (Strict Mask)</div>
-                    <img src={result.finalResultUrl} alt="Final result" className={styles.resultImg} />
+                    <img
+                      src={result.finalResultUrl}
+                      alt="Final result"
+                      className={styles.resultImg}
+                    />
                   </div>
                 )}
               </div>

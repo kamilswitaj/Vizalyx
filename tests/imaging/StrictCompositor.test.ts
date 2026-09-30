@@ -43,7 +43,7 @@ describe('strictComposite', () => {
 
   it('preserves outside pixels exactly when mask is mixed', () => {
     // 2 pixels: first is inside (255), second is outside (0)
-    const original = new Uint8ClampedArray([50, 60, 70, 255,  80, 90, 100, 255]);
+    const original = new Uint8ClampedArray([50, 60, 70, 255, 80, 90, 100, 255]);
     const generated = new Uint8ClampedArray([200, 210, 220, 255, 230, 240, 250, 255]);
     const mask = new Uint8ClampedArray([255, 0]); // first inside, second outside
     const result = strictComposite(original, generated, mask, 2, 1);
@@ -57,10 +57,76 @@ describe('strictComposite', () => {
     expect(result[6]).toBe(100);
   });
 
-  it('throws on mismatched buffer lengths', () => {
-    const original = new Uint8ClampedArray(4);
-    const generated = new Uint8ClampedArray(8);
-    const mask = new Uint8ClampedArray(1);
-    expect(() => strictComposite(original, generated, mask, 1, 1)).toThrow();
+  it('strictly preserves exact RGBA byte values when mask value is 0', () => {
+    // Check arbitrary byte values including 0, 255, odd values, alpha values
+    const original = new Uint8ClampedArray([1, 137, 254, 73]);
+    const generated = new Uint8ClampedArray([255, 0, 12, 200]);
+    const mask = new Uint8ClampedArray([0]);
+    const result = strictComposite(original, generated, mask, 1, 1);
+    expect(result[0]).toBe(1);
+    expect(result[1]).toBe(137);
+    expect(result[2]).toBe(254);
+    expect(result[3]).toBe(73);
+  });
+
+  describe('validation', () => {
+    const validOriginal = new Uint8ClampedArray(16);
+    const validGenerated = new Uint8ClampedArray(16);
+    const validMask = new Uint8ClampedArray(4);
+
+    it('rejects non-integer width', () => {
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, 2.5, 2)).toThrow(
+        /width must be a positive integer/
+      );
+    });
+
+    it('rejects zero or negative width', () => {
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, 0, 2)).toThrow(
+        /width must be a positive integer/
+      );
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, -2, 2)).toThrow(
+        /width must be a positive integer/
+      );
+    });
+
+    it('rejects non-integer height', () => {
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, 2, 1.8)).toThrow(
+        /height must be a positive integer/
+      );
+    });
+
+    it('rejects zero or negative height', () => {
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, 2, 0)).toThrow(
+        /height must be a positive integer/
+      );
+      expect(() => strictComposite(validOriginal, validGenerated, validMask, 2, -1)).toThrow(
+        /height must be a positive integer/
+      );
+    });
+
+    it('rejects originalData length mismatch', () => {
+      const shortOrig = new Uint8ClampedArray(12);
+      expect(() => strictComposite(shortOrig, validGenerated, validMask, 2, 2)).toThrow(
+        /originalData.length must equal/
+      );
+    });
+
+    it('rejects generatedData length mismatch', () => {
+      const longGen = new Uint8ClampedArray(20);
+      expect(() => strictComposite(validOriginal, longGen, validMask, 2, 2)).toThrow(
+        /generatedData.length must equal/
+      );
+    });
+
+    it('rejects maskData too short or too long', () => {
+      const shortMask = new Uint8ClampedArray(3);
+      expect(() => strictComposite(validOriginal, validGenerated, shortMask, 2, 2)).toThrow(
+        /maskData.length must equal/
+      );
+      const longMask = new Uint8ClampedArray(5);
+      expect(() => strictComposite(validOriginal, validGenerated, longMask, 2, 2)).toThrow(
+        /maskData.length must equal/
+      );
+    });
   });
 });
