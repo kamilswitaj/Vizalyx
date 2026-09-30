@@ -77,9 +77,13 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
 
     // 7. Verify Strict Mask result appears in UI
     await expect(page.getByText('Final (Strict Mask)')).toBeVisible({ timeout: 15000 });
-    const finalImg = page.getByAltText('Final result');
+    const finalImg = page.getByAltText('Final result').first();
     await expect(finalImg).toBeVisible();
     await expect(page.getByText(/Done in \d+ms/)).toBeVisible();
+
+    // Verify view toggle in toolbar
+    await expect(page.getByRole('button', { name: 'Mask Editor' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Inspect Result' })).toBeVisible();
 
     // 8. Prove pipeline pixel correctness:
     // - known pixel outside mask (195, 195) MUST EXACTLY equal source RGBA [68, 136, 255, 255]

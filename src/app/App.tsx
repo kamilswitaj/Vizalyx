@@ -5,6 +5,7 @@ import { OpenAIImageEditProvider } from '../providers/openai/OpenAIImageEditProv
 import { ProviderRegistry } from '../providers/registry';
 import { SettingsModal } from '../settings/SettingsModal';
 import { ProjectListModal } from '../projects/ProjectListModal';
+import { InspectionViewer } from '../editor/inspection/InspectionViewer';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
 import { featherMask } from '../imaging/masks/featherMask';
 import { rasterMaskToBlob } from '../imaging/masks/maskExport';
@@ -151,7 +152,9 @@ export function App(): React.ReactElement {
   const [editMode, setEditMode] = useState<EditMode>('strict-mask');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
+  const [centerView, setCenterView] = useState<'editor' | 'inspect'>('editor');
   const [error, setError] = useState<string | null>(null);
+
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const generationIdRef = useRef(0);
@@ -197,6 +200,7 @@ export function App(): React.ReactElement {
       });
 
       setMaskState(createEmptyMask());
+      setCenterView('editor');
       setError(null);
 
       // Create new project if not loading an existing one
@@ -457,6 +461,7 @@ export function App(): React.ReactElement {
         finalResultBlob: finalBlob,
         elapsedMilliseconds: editResult.elapsedMilliseconds,
       });
+      setCenterView('inspect');
 
       // Persist run in IndexedDB
       const activeProj = currentProjectRef.current;
@@ -531,6 +536,14 @@ export function App(): React.ReactElement {
     a.click();
   }, [result]);
 
+  const handleDownloadProvider = useCallback(() => {
+    if (!result) return;
+    const a = document.createElement('a');
+    a.href = result.providerResultUrl;
+    a.download = 'vizalyx-provider-result.png';
+    a.click();
+  }, [result]);
+
   // Project management handlers
   const handleSelectProject = useCallback(
     async (projectId: string) => {
@@ -564,6 +577,7 @@ export function App(): React.ReactElement {
       revokeResultUrls(prev);
       return null;
     });
+    setCenterView('editor');
     setError(null);
   }, []);
 
@@ -625,10 +639,12 @@ export function App(): React.ReactElement {
           elapsedMilliseconds: run.elapsedMilliseconds,
         };
       });
+      setCenterView('inspect');
     } catch (err) {
       console.error('Failed to load run result assets:', err);
     }
   }, []);
+
 
   return (
     <div className={styles.layout} onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -663,6 +679,30 @@ export function App(): React.ReactElement {
         <button onClick={() => setIsSettingsOpen(true)}>
           Settings {openAiKey ? '●' : ''}
         </button>
+        {result && (
+          <div style={{ display: 'flex', gap: '4px', marginLeft: '6px' }}>
+            <button
+              style={{
+                background: centerView === 'editor' ? '#3355cc' : '#3a3a3a',
+                color: '#fff',
+                fontWeight: centerView === 'editor' ? 600 : 'normal',
+              }}
+              onClick={() => setCenterView('editor')}
+            >
+              Mask Editor
+            </button>
+            <button
+              style={{
+                background: centerView === 'inspect' ? '#3355cc' : '#3a3a3a',
+                color: '#fff',
+                fontWeight: centerView === 'inspect' ? 600 : 'normal',
+              }}
+              onClick={() => setCenterView('inspect')}
+            >
+              Inspect Result
+            </button>
+          </div>
+        )}
       </header>
 
       <div className={styles.body}>
@@ -741,9 +781,21 @@ export function App(): React.ReactElement {
           </div>
         </aside>
 
-        {/* Canvas Area */}
+        {/* Canvas or Inspection Area */}
         <main className={styles.canvasArea}>
-          {sourceImage ? (
+          {centerView === 'inspect' && result && sourceImage ? (
+            <InspectionViewer
+              sourceUrl={sourceImage.objectUrl}
+              providerResultUrl={result.providerResultUrl}
+              finalResultUrl={result.finalResultUrl}
+              editMode={result.editMode}
+              elapsedMilliseconds={result.elapsedMilliseconds}
+              modelId={result.modelId}
+              onDownloadFinal={handleDownload}
+              onDownloadProvider={handleDownloadProvider}
+              onSwitchToEditor={() => setCenterView('editor')}
+            />
+          ) : sourceImage ? (
             <EditorCanvas
               sourceUrl={sourceImage.objectUrl}
               sourceWidth={sourceImage.width}
@@ -762,6 +814,7 @@ export function App(): React.ReactElement {
             </div>
           )}
         </main>
+
 
         {/* Right panel: Edit & Generate & History */}
         <aside className={styles.rightPanel}>
