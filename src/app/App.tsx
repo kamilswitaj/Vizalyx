@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EditorCanvas } from '../editor/canvas/EditorCanvas';
 import { FakeImageEditProvider } from '../providers/fake/FakeImageEditProvider';
+import { OpenAIImageEditProvider } from '../providers/openai/OpenAIImageEditProvider';
+import { ProviderRegistry } from '../providers/registry';
+import { SettingsModal } from '../settings/SettingsModal';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
 import { featherMask } from '../imaging/masks/featherMask';
 import {
@@ -27,6 +30,9 @@ interface SourceImage {
 
 interface GenerateResult {
   editMode: EditMode;
+  providerId: string;
+  modelId: string;
+  quality: string;
   featherPixels?: number;
   providerResultUrl: string;
   finalResultUrl: string;
@@ -34,7 +40,12 @@ interface GenerateResult {
   elapsedMilliseconds: number;
 }
 
+// Global provider registry instance
+const registry = new ProviderRegistry();
 const fakeProvider = new FakeImageEditProvider();
+const openAiProvider = new OpenAIImageEditProvider();
+registry.register(fakeProvider);
+registry.register(openAiProvider);
 
 function revokeResultUrls(res: GenerateResult | null) {
   if (!res) return;
@@ -61,6 +72,47 @@ export function App(): React.ReactElement {
   const [brushRadius, setBrushRadius] = useState(20);
   const [featherPixels, setFeatherPixels] = useState(8);
   const [fitTrigger, setFitTrigger] = useState(0);
+
+  // BYOK in-memory state only
+  const [openAiKey, setOpenAiKey] = useState<string>('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Provider & Model configuration
+  const descriptors = useMemo(() => registry.getDescriptors(), []);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('fake');
+  const selectedProvider = useMemo(
+    () => registry.get(selectedProviderId) ?? fakeProvider,
+    [selectedProviderId]
+  );
+  const providerDescriptor = useMemo(
+    () => selectedProvider.getDescriptor(),
+    [selectedProvider]
+  );
+
+  const [selectedModelId, setSelectedModelId] = useState<string>(
+    () => providerDescriptor.models[0]?.id ?? 'fake-model'
+  );
+
+  // Sync selected model when provider changes
+  useEffect(() => {
+    const firstModel = providerDescriptor.models[0]?.id;
+    if (firstModel) setSelectedModelId(firstModel);
+  }, [providerDescriptor]);
+
+  const selectedModel = useMemo(
+    () => providerDescriptor.models.find(m => m.id === selectedModelId) ?? providerDescriptor.models[0],
+    [providerDescriptor, selectedModelId]
+  );
+
+  const [selectedQuality, setSelectedQuality] = useState<string>(
+    () => selectedModel?.supportedQualities[0] ?? 'standard'
+  );
+
+  // Sync selected quality when model changes
+  useEffect(() => {
+    const firstQuality = selectedModel?.supportedQualities[0];
+    if (firstQuality) setSelectedQuality(firstQuality);
+  }, [selectedModel]);
 
   const [prompt, setPrompt] = useState('');
   const [editMode, setEditMode] = useState<EditMode>('strict-mask');
@@ -184,8 +236,10 @@ export function App(): React.ReactElement {
   const handleClear = useCallback(() => setMaskState(prev => clearMask(prev)), []);
   const handleFitViewport = useCallback(() => setFitTrigger(prev => prev + 1), []);
 
-  // Generate
-  const canGenerate = sourceImage !== null && prompt.trim().length > 0 && !isGenerating;
+  // Generate validation
+  const needsApiKey = selectedProviderId === 'openai' && !openAiKey.trim();
+  const canGenerate =
+    sourceImage !== null && prompt.trim().length > 0 && !isGenerating && !needsApiKey;
 
   const handleGenerate = useCallback(async () => {
     if (!sourceImage || !canGenerate) return;
@@ -203,6 +257,9 @@ export function App(): React.ReactElement {
     abortControllerRef.current = abortController;
     const currentMode = editMode;
     const currentFeather = featherPixels;
+    const currentProvider = selectedProvider;
+    const currentModelId = selectedModelId;
+    const currentQuality = selectedQuality;
 
     try {
       // Rasterize mask only when required for generation/compositing
@@ -218,11 +275,12 @@ export function App(): React.ReactElement {
         mask,
         referenceBlobs: [],
         prompt: prompt.trim(),
-        modelId: 'fake-model',
-        quality: 'standard',
+        modelId: currentModelId,
+        quality: currentQuality,
       };
 
-      const editResult = await fakeProvider.edit(request, { apiKey: '' }, abortController.signal);
+      const credentials = { apiKey: selectedProviderId === 'openai' ? openAiKey : '' };
+      const editResult = await currentProvider.edit(request, credentials, abortController.signal);
 
       // Invalidate if source image changed or cancelled
       if (generationIdRef.current !== currentGenId) {
@@ -280,6 +338,9 @@ export function App(): React.ReactElement {
 
       setResult({
         editMode: currentMode,
+        providerId: selectedProviderId,
+        modelId: currentModelId,
+        quality: currentQuality,
         featherPixels: currentFeather,
         providerResultUrl: providerUrl,
         finalResultUrl: finalUrl,
@@ -301,7 +362,19 @@ export function App(): React.ReactElement {
         abortControllerRef.current = null;
       }
     }
-  }, [sourceImage, canGenerate, editMode, featherPixels, maskState, prompt]);
+  }, [
+    sourceImage,
+    canGenerate,
+    editMode,
+    featherPixels,
+    selectedProvider,
+    selectedProviderId,
+    selectedModelId,
+    selectedQuality,
+    openAiKey,
+    maskState,
+    prompt,
+  ]);
 
   const handleCancel = useCallback(() => {
     if (abortControllerRef.current) {
@@ -347,6 +420,9 @@ export function App(): React.ReactElement {
           disabled={maskState.historyIndex >= maskState.operations.length - 1 || isGenerating}
         >
           Redo
+        </button>
+        <button onClick={() => setIsSettingsOpen(true)}>
+          Settings {openAiKey ? '●' : ''}
         </button>
       </header>
 
@@ -452,7 +528,47 @@ export function App(): React.ReactElement {
         <aside className={styles.rightPanel}>
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Provider</label>
-            <span>Fake (Dev/Test)</span>
+            <select
+              className={styles.selectInput}
+              value={selectedProviderId}
+              onChange={e => setSelectedProviderId(e.target.value)}
+            >
+              {descriptors.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.panelSection}>
+            <label className={styles.panelLabel}>Model</label>
+            <select
+              className={styles.selectInput}
+              value={selectedModelId}
+              onChange={e => setSelectedModelId(e.target.value)}
+            >
+              {providerDescriptor.models.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.panelSection}>
+            <label className={styles.panelLabel}>Quality</label>
+            <select
+              className={styles.selectInput}
+              value={selectedQuality}
+              onChange={e => setSelectedQuality(e.target.value)}
+            >
+              {selectedModel?.supportedQualities.map(q => (
+                <option key={q} value={q}>
+                  {q}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className={styles.panelSection}>
@@ -514,6 +630,12 @@ export function App(): React.ReactElement {
             </div>
           </div>
 
+          {needsApiKey && (
+            <div className={styles.errorMsg}>
+              OpenAI API key required. Click Settings in the toolbar to enter your key.
+            </div>
+          )}
+
           {error && <div className={styles.errorMsg}>{error}</div>}
 
           {!isGenerating ? (
@@ -534,7 +656,7 @@ export function App(): React.ReactElement {
           {result && (
             <div className={styles.resultSection}>
               <div className={styles.resultMeta}>
-                Done in {result.elapsedMilliseconds}ms (
+                Done in {result.elapsedMilliseconds}ms ({result.modelId},{' '}
                 {result.editMode === 'strict-mask'
                   ? `Strict Mask, ${result.featherPixels ?? 0}px feather`
                   : 'AI Mask'}
@@ -567,6 +689,15 @@ export function App(): React.ReactElement {
           )}
         </aside>
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        openAiKey={openAiKey}
+        onSaveKey={setOpenAiKey}
+        openAiProvider={openAiProvider}
+      />
     </div>
   );
 }
