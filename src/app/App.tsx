@@ -38,6 +38,12 @@ interface SourceImage {
   objectUrl: string;
 }
 
+interface ReferenceImage {
+  id: string;
+  blob: Blob;
+  objectUrl: string;
+}
+
 interface GenerateResult {
   editMode: EditMode;
   providerId: string;
@@ -73,6 +79,11 @@ function revokeSourceImageUrl(source: SourceImage | null) {
     URL.revokeObjectURL(source.objectUrl);
   }
 }
+
+function revokeReferenceImageUrls(refs: ReferenceImage[]) {
+  refs.forEach(r => URL.revokeObjectURL(r.objectUrl));
+}
+
 
 export function App(): React.ReactElement {
   const [sourceImage, setSourceImage] = useState<SourceImage | null>(null);
@@ -132,6 +143,11 @@ export function App(): React.ReactElement {
   }, [selectedModel]);
 
   const [prompt, setPrompt] = useState('');
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const refFileInputRef = useRef<HTMLInputElement>(null);
+  const referenceImagesRef = useRef<ReferenceImage[]>([]);
+  referenceImagesRef.current = referenceImages;
+
   const [editMode, setEditMode] = useState<EditMode>('strict-mask');
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
@@ -152,8 +168,10 @@ export function App(): React.ReactElement {
     return () => {
       revokeSourceImageUrl(sourceImageRef.current);
       revokeResultUrls(resultRef.current);
+      revokeReferenceImageUrls(referenceImagesRef.current);
     };
   }, []);
+
 
   const loadImage = useCallback(async (blob: Blob, existingProjectId?: string) => {
     // Cancel in-flight generation and invalidate generation ID
@@ -290,6 +308,43 @@ export function App(): React.ReactElement {
   const handleClear = useCallback(() => setMaskState(prev => clearMask(prev)), []);
   const handleFitViewport = useCallback(() => setFitTrigger(prev => prev + 1), []);
 
+  // Reference images handlers
+  const handleAddReferenceImages = useCallback((fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    const maxRefs = 4;
+    setReferenceImages(prev => {
+      const remaining = maxRefs - prev.length;
+      if (remaining <= 0) return prev;
+      const added: ReferenceImage[] = [];
+      for (let i = 0; i < Math.min(files.length, remaining); i++) {
+        const file = files[i];
+        if (
+          file &&
+          (file.type.startsWith('image/') ||
+            /\.(png|jpe?g|webp)$/i.test(file.name) ||
+            !file.type)
+        ) {
+          added.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${i}`,
+            blob: file,
+            objectUrl: URL.createObjectURL(file),
+          });
+        }
+      }
+      return [...prev, ...added];
+    });
+  }, []);
+
+
+  const handleRemoveReferenceImage = useCallback((id: string) => {
+    setReferenceImages(prev => {
+      const target = prev.find(r => r.id === id);
+      if (target) URL.revokeObjectURL(target.objectUrl);
+      return prev.filter(r => r.id !== id);
+    });
+  }, []);
+
   // Generate validation
   const needsApiKey = selectedProviderId === 'openai' && !openAiKey.trim();
   const canGenerate =
@@ -327,11 +382,12 @@ export function App(): React.ReactElement {
       const request: ImageEditRequest = {
         sourceBlob: sourceImage.blob,
         mask,
-        referenceBlobs: [],
+        referenceBlobs: referenceImages.map(r => r.blob),
         prompt: prompt.trim(),
         modelId: currentModelId,
         quality: currentQuality,
       };
+
 
       const credentials = { apiKey: selectedProviderId === 'openai' ? openAiKey : '' };
       const editResult = await currentProvider.edit(request, credentials, abortController.signal);
@@ -418,6 +474,7 @@ export function App(): React.ReactElement {
             maskBlob: maskPng,
             providerResultBlob: editResult.resultBlob,
             finalResultBlob: finalBlob,
+            referenceBlobs: referenceImages.map(r => r.blob),
             elapsedMilliseconds: editResult.elapsedMilliseconds,
             providerRequestId: editResult.providerRequestId,
           });
@@ -453,6 +510,7 @@ export function App(): React.ReactElement {
     openAiKey,
     maskState,
     prompt,
+    referenceImages,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -493,6 +551,10 @@ export function App(): React.ReactElement {
   const handleNewProject = useCallback(() => {
     setCurrentProject(null);
     setRuns([]);
+    setReferenceImages(prev => {
+      revokeReferenceImageUrls(prev);
+      return [];
+    });
     setSourceImage(prev => {
       revokeSourceImageUrl(prev);
       return null;
@@ -513,6 +575,31 @@ export function App(): React.ReactElement {
     setSelectedQuality(run.quality);
     setEditMode(run.editMode);
     setFeatherPixels(run.featherPixels);
+
+    if (run.referenceAssetIds && run.referenceAssetIds.length > 0) {
+      void (async () => {
+        const loadedRefs: ReferenceImage[] = [];
+        for (const assetId of run.referenceAssetIds) {
+          const blob = await getAssetBlob(assetId);
+          if (blob) {
+            loadedRefs.push({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              blob,
+              objectUrl: URL.createObjectURL(blob),
+            });
+          }
+        }
+        setReferenceImages(prev => {
+          revokeReferenceImageUrls(prev);
+          return loadedRefs;
+        });
+      })();
+    } else {
+      setReferenceImages(prev => {
+        revokeReferenceImageUrls(prev);
+        return [];
+      });
+    }
   }, []);
 
   const handleViewRunResult = useCallback(async (run: RunEntity) => {
@@ -733,6 +820,54 @@ export function App(): React.ReactElement {
               rows={4}
             />
           </div>
+
+          {/* Reference Images */}
+          {selectedModel?.supportsReferenceImages && (
+            <div className={styles.panelSection}>
+              <label className={styles.panelLabel}>
+                Reference Images <span>({referenceImages.length}/4)</span>
+              </label>
+              {referenceImages.length > 0 && (
+                <div className={styles.referenceList}>
+                  {referenceImages.map(ref => (
+                    <div key={ref.id} className={styles.referenceItem}>
+                      <img src={ref.objectUrl} alt="Reference" className={styles.referenceThumb} />
+                      <button
+                        className={styles.referenceRemoveBtn}
+                        onClick={() => handleRemoveReferenceImage(ref.id)}
+                        title="Remove reference image"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {referenceImages.length < 4 && (
+                <>
+                  <input
+                    ref={refFileInputRef}
+                    type="file"
+                    multiple
+                    data-testid="ref-file-input"
+                    accept="image/png,image/jpeg,image/webp"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      handleAddReferenceImages(e.target.files);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    className={styles.addRefBtn}
+                    onClick={() => refFileInputRef.current?.click()}
+                  >
+                    + Add Reference Image
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
 
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Mode</label>

@@ -69,6 +69,38 @@ describe('projectRepository', () => {
     expect(retrievedFinal).toBeInstanceOf(Blob);
   });
 
+  it('persists reference image assets with a Run', async () => {
+    const sourceBlob = new Blob(['source'], { type: 'image/png' });
+    const { project } = await createProject('Reference Test', sourceBlob, 400, 400);
+
+    const maskBlob = new Blob(['mask'], { type: 'image/png' });
+    const providerResultBlob = new Blob(['result'], { type: 'image/png' });
+    const finalResultBlob = new Blob(['final'], { type: 'image/png' });
+    const refBlob1 = new Blob(['ref1'], { type: 'image/png' });
+    const refBlob2 = new Blob(['ref2'], { type: 'image/png' });
+
+    const run = await saveRun({
+      projectId: project.id,
+      providerId: 'fake',
+      modelId: 'fake-model',
+      quality: 'standard',
+      prompt: 'reference test',
+      editMode: 'strict-mask',
+      featherPixels: 0,
+      maskBlob,
+      providerResultBlob,
+      finalResultBlob,
+      referenceBlobs: [refBlob1, refBlob2],
+      elapsedMilliseconds: 100,
+    });
+
+    expect(run.referenceAssetIds).toHaveLength(2);
+    const refAsset1 = await getAssetBlob(run.referenceAssetIds[0]!);
+    expect(refAsset1).toBeInstanceOf(Blob);
+    const refAsset2 = await getAssetBlob(run.referenceAssetIds[1]!);
+    expect(refAsset2).toBeInstanceOf(Blob);
+  });
+
   it('lists projects sorted by updatedAt', async () => {
     const blob = new Blob(['img'], { type: 'image/png' });
     await createProject('Project A', blob, 100, 100);

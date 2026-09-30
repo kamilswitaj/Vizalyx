@@ -17,7 +17,7 @@ const DESCRIPTOR: ImageProviderDescriptor = {
       displayName: 'Fake Model',
       supportedQualities: ['standard'],
       supportsMask: true,
-      supportsReferenceImages: false,
+      supportsReferenceImages: true,
       supportsCustomResolution: false,
     },
   ],

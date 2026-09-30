@@ -131,6 +131,12 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
     formData.append('quality', request.quality);
     formData.append('response_format', 'b64_json');
 
+    if (request.referenceBlobs && request.referenceBlobs.length > 0) {
+      for (let i = 0; i < request.referenceBlobs.length; i++) {
+        formData.append('reference_images', request.referenceBlobs[i]!, `reference-${i + 1}.png`);
+      }
+    }
+
     // 4. Send directly from browser to OpenAI
     let response: Response;
     try {

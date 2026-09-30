@@ -28,6 +28,7 @@ export interface SaveRunInput {
   maskBlob: Blob;
   providerResultBlob: Blob;
   finalResultBlob: Blob;
+  referenceBlobs?: Blob[];
   referenceAssetIds?: string[];
   elapsedMilliseconds: number;
   providerRequestId?: string;
@@ -142,6 +143,22 @@ export async function saveRun(input: SaveRunInput): Promise<RunEntity> {
     createdAt: now,
   };
 
+  const referenceAssets: AssetEntity[] = (input.referenceBlobs ?? []).map(blob => ({
+    id: generateId(),
+    projectId: input.projectId,
+    kind: 'reference',
+    blob,
+    mimeType: blob.type || 'image/png',
+    width: 0,
+    height: 0,
+    createdAt: now,
+  }));
+
+  const allReferenceAssetIds = [
+    ...(input.referenceAssetIds ?? []),
+    ...referenceAssets.map(a => a.id),
+  ];
+
   const run: RunEntity = {
     id: runId,
     projectId: input.projectId,
@@ -155,7 +172,7 @@ export async function saveRun(input: SaveRunInput): Promise<RunEntity> {
     maskAssetId,
     providerResultAssetId,
     finalResultAssetId,
-    referenceAssetIds: input.referenceAssetIds ?? [],
+    referenceAssetIds: allReferenceAssetIds,
     elapsedMilliseconds: input.elapsedMilliseconds,
     providerRequestId: input.providerRequestId,
     status: input.status ?? 'completed',
@@ -163,7 +180,12 @@ export async function saveRun(input: SaveRunInput): Promise<RunEntity> {
   };
 
   await db.transaction('rw', [db.projects, db.assets, db.runs], async () => {
-    await db.assets.bulkAdd([maskAsset, providerResultAsset, finalResultAsset]);
+    await db.assets.bulkAdd([
+      maskAsset,
+      providerResultAsset,
+      finalResultAsset,
+      ...referenceAssets,
+    ]);
     await db.runs.add(run);
     await db.projects.update(input.projectId, { updatedAt: now });
   });

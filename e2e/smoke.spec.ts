@@ -57,6 +57,15 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     await promptArea.pressSequentially('make the selected region red with modern design');
     expect(await promptArea.inputValue()).toBe('make the selected region red with modern design');
 
+    // 4b. Attach a reference image
+    const refInput = page.getByTestId('ref-file-input');
+    await refInput.setInputFiles({
+      name: 'reference.png',
+      mimeType: 'image/png',
+      buffer: testImageBuffer,
+    });
+    await expect(page.getByAltText('Reference')).toBeVisible();
+
     // 5. Verify Strict Mask mode is selected
     const strictRadio = page.getByLabel('Strict Mask');
     await expect(strictRadio).toBeChecked();

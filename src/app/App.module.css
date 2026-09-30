@@ -255,6 +255,74 @@
   font-size: 0.9rem;
 }
 
+.referenceSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.referenceList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.referenceItem {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #444;
+}
+
+.referenceThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.referenceRemoveBtn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.referenceRemoveBtn:hover {
+  background: #cc2222;
+}
+
+.addRefBtn {
+  padding: 6px 10px;
+  background: #2a2a2a;
+  border: 1px dashed #555;
+  color: #aaa;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.addRefBtn:hover:not(:disabled) {
+  background: #333;
+  border-color: #7aa3ff;
+  color: #fff;
+}
+
+
 .runsSection {
   border-top: 1px solid #444;
   padding-top: 12px;

@@ -120,6 +120,35 @@ describe('OpenAIImageEditProvider', () => {
       expect(result.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
     });
 
+    it('appends reference images to multipart FormData', async () => {
+      const fakeB64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const mockResponse = {
+        data: [{ b64_json: fakeB64 }],
+      };
+
+      let capturedBody: FormData | null = null;
+      globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+        capturedBody = init.body as FormData;
+        return Promise.resolve(
+          new Response(JSON.stringify(mockResponse), {
+            status: 200,
+            headers: { 'x-request-id': 'req-ref' },
+          })
+        );
+      });
+
+      const refBlob = new Blob(['ref-img'], { type: 'image/png' });
+      await provider.edit(
+        { ...validRequest, referenceBlobs: [refBlob] },
+        { apiKey: 'sk-test' }
+      );
+
+      expect(capturedBody).not.toBeNull();
+      const allRefs = (capturedBody as unknown as FormData).getAll('reference_images');
+      expect(allRefs).toHaveLength(1);
+    });
+
     it('handles 401 error gracefully without exposing key', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { message: 'Incorrect API key' } }), {
