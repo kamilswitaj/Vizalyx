@@ -70,7 +70,7 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     await expect(page.getByText('Final (Strict Mask)')).toBeVisible({ timeout: 15000 });
     const finalImg = page.getByAltText('Final result');
     await expect(finalImg).toBeVisible();
-    await expect(page.getByText(/Done in \d+ms \(Strict Mask\)/)).toBeVisible();
+    await expect(page.getByText(/Done in \d+ms \(Strict Mask/)).toBeVisible();
 
     // 8. Prove pipeline pixel correctness:
     // - known pixel outside mask (195, 195) MUST EXACTLY equal source RGBA [68, 136, 255, 255]
@@ -115,4 +115,90 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     expect(inspection.centerData[0]).toBeGreaterThan(100);
     expect(inspection.centerData[2]).toBeLessThan(200);
   });
+
+  test('supports brush, eraser, clear mask, undo, and redo interactions', async ({ page }) => {
+    await page.goto('./');
+    await expect(page.getByText('Vizalyx')).toBeVisible();
+
+    // 1. Generate and load test image
+    const dataUrl = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 200;
+      c.height = 200;
+      const ctx = c.getContext('2d');
+      if (!ctx) throw new Error('No ctx');
+      ctx.fillStyle = '#2266aa';
+      ctx.fillRect(0, 0, 200, 200);
+      return c.toDataURL('image/png');
+    });
+
+    const fileInput = page.getByTestId('file-input');
+    await fileInput.setInputFiles({
+      name: 'input2.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(dataUrl.split(',')[1]!, 'base64'),
+    });
+
+    const canvas = page.locator('canvas').first();
+    await expect(canvas).toBeVisible();
+
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+
+    // 2. Select Brush tool
+    const brushBtn = page.getByRole('button', { name: 'Brush' });
+    await brushBtn.click();
+    await expect(brushBtn).toHaveClass(/toolBtnActive/);
+
+    // Verify Brush size control is visible
+    await expect(page.getByText(/Size/)).toBeVisible();
+
+    // Paint a stroke across center
+    await page.mouse.move(box.x + 40, box.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 160, box.y + 100);
+    await page.mouse.up();
+
+    // Verify Undo is enabled
+    const undoBtn = page.getByRole('button', { name: 'Undo' });
+    const redoBtn = page.getByRole('button', { name: 'Redo' });
+    await expect(undoBtn).toBeEnabled();
+    await expect(redoBtn).toBeDisabled();
+
+    // 3. Select Eraser tool
+    const eraserBtn = page.getByRole('button', { name: 'Eraser' });
+    await eraserBtn.click();
+    await expect(eraserBtn).toHaveClass(/toolBtnActive/);
+
+    // Erase a vertical strip cutting through the stroke
+    await page.mouse.move(box.x + 100, box.y + 60);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 100, box.y + 140);
+    await page.mouse.up();
+
+    // 4. Test Undo / Redo on Eraser
+    await undoBtn.click();
+    await expect(redoBtn).toBeEnabled();
+    await redoBtn.click();
+
+    // 5. Test Clear Mask and Undo
+    const clearBtn = page.getByRole('button', { name: 'Clear Mask' });
+    await expect(clearBtn).toBeEnabled();
+    await clearBtn.click();
+
+    // Undo Clear restores the previous mask
+    await undoBtn.click();
+
+    // 6. Test Fit button
+    const fitBtn = page.getByRole('button', { name: 'Fit' });
+    await expect(fitBtn).toBeEnabled();
+    await fitBtn.click();
+
+    // 7. Test Pan tool
+    const panBtn = page.getByRole('button', { name: 'Pan' });
+    await panBtn.click();
+    await expect(panBtn).toHaveClass(/toolBtnActive/);
+  });
 });
+

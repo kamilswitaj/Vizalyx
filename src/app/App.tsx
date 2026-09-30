@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { EditorCanvas } from '../editor/canvas/EditorCanvas';
 import { FakeImageEditProvider } from '../providers/fake/FakeImageEditProvider';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
+import { featherMask } from '../imaging/masks/featherMask';
 import {
   applyOperation,
+  clearMask,
   createEmptyMask,
   MaskState,
   rasterizeMask,
@@ -11,6 +13,7 @@ import {
   redo,
 } from '../editor/mask/maskModel';
 import type { ImageEditRequest, RasterMask } from '../providers/contracts/types';
+import type { EditorTool } from '../editor/tools/editorTools';
 import styles from './App.module.css';
 
 type EditMode = 'ai-mask' | 'strict-mask';
@@ -24,6 +27,7 @@ interface SourceImage {
 
 interface GenerateResult {
   editMode: EditMode;
+  featherPixels?: number;
   providerResultUrl: string;
   finalResultUrl: string;
   finalResultBlob: Blob;
@@ -53,6 +57,11 @@ export function App(): React.ReactElement {
   const [sourceImage, setSourceImage] = useState<SourceImage | null>(null);
   const [maskState, setMaskState] = useState<MaskState>(createEmptyMask());
   const [maskOpacity, setMaskOpacity] = useState(0.5);
+  const [activeTool, setActiveTool] = useState<EditorTool>('rectangle');
+  const [brushRadius, setBrushRadius] = useState(20);
+  const [featherPixels, setFeatherPixels] = useState(8);
+  const [fitTrigger, setFitTrigger] = useState(0);
+
   const [prompt, setPrompt] = useState('');
   const [editMode, setEditMode] = useState<EditMode>('strict-mask');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -61,6 +70,7 @@ export function App(): React.ReactElement {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const generationIdRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Store refs for unmount cleanup
   const sourceImageRef = useRef<SourceImage | null>(null);
@@ -148,8 +158,6 @@ export function App(): React.ReactElement {
     [loadImage]
   );
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   // File open
   const handleFileOpen = useCallback(() => {
     fileInputRef.current?.click();
@@ -173,6 +181,8 @@ export function App(): React.ReactElement {
 
   const handleUndo = useCallback(() => setMaskState(prev => undo(prev)), []);
   const handleRedo = useCallback(() => setMaskState(prev => redo(prev)), []);
+  const handleClear = useCallback(() => setMaskState(prev => clearMask(prev)), []);
+  const handleFitViewport = useCallback(() => setFitTrigger(prev => prev + 1), []);
 
   // Generate
   const canGenerate = sourceImage !== null && prompt.trim().length > 0 && !isGenerating;
@@ -192,14 +202,15 @@ export function App(): React.ReactElement {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     const currentMode = editMode;
+    const currentFeather = featherPixels;
 
     try {
       // Rasterize mask only when required for generation/compositing
-      const maskPixels = rasterizeMask(maskState, sourceImage.width, sourceImage.height);
+      const rawMaskPixels = rasterizeMask(maskState, sourceImage.width, sourceImage.height);
       const mask: RasterMask = {
         width: sourceImage.width,
         height: sourceImage.height,
-        data: maskPixels,
+        data: rawMaskPixels,
       };
 
       const request: ImageEditRequest = {
@@ -237,10 +248,16 @@ export function App(): React.ReactElement {
         origBitmap.close();
         genBitmap.close();
 
+        // Apply feathering to the strict mask if configured
+        const effectiveMask =
+          currentFeather > 0
+            ? featherMask(rawMaskPixels, sourceImage.width, sourceImage.height, currentFeather)
+            : rawMaskPixels;
+
         const composited = strictComposite(
           origPixels.data,
           genPixels.data,
-          maskPixels,
+          effectiveMask,
           sourceImage.width,
           sourceImage.height
         );
@@ -263,6 +280,7 @@ export function App(): React.ReactElement {
 
       setResult({
         editMode: currentMode,
+        featherPixels: currentFeather,
         providerResultUrl: providerUrl,
         finalResultUrl: finalUrl,
         finalResultBlob: finalBlob,
@@ -283,7 +301,7 @@ export function App(): React.ReactElement {
         abortControllerRef.current = null;
       }
     }
-  }, [sourceImage, canGenerate, editMode, maskState, prompt]);
+  }, [sourceImage, canGenerate, editMode, featherPixels, maskState, prompt]);
 
   const handleCancel = useCallback(() => {
     if (abortControllerRef.current) {
@@ -318,6 +336,9 @@ export function App(): React.ReactElement {
           onChange={handleFileInputChange}
         />
         <span className={styles.toolbarHint}>or Ctrl+V / drag & drop</span>
+        <button onClick={handleFitViewport} disabled={!sourceImage}>
+          Fit
+        </button>
         <button onClick={handleUndo} disabled={maskState.historyIndex < 0 || isGenerating}>
           Undo
         </button>
@@ -330,14 +351,69 @@ export function App(): React.ReactElement {
       </header>
 
       <div className={styles.body}>
-        {/* Left panel */}
+        {/* Left panel: Tools */}
         <aside className={styles.leftPanel}>
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Tools</label>
-            <button className={styles.toolBtn}>Rect</button>
+            <div className={styles.toolGroup}>
+              <button
+                className={activeTool === 'rectangle' ? styles.toolBtnActive : styles.toolBtn}
+                onClick={() => setActiveTool('rectangle')}
+              >
+                Rectangle
+              </button>
+              <button
+                className={activeTool === 'brush' ? styles.toolBtnActive : styles.toolBtn}
+                onClick={() => setActiveTool('brush')}
+              >
+                Brush
+              </button>
+              <button
+                className={activeTool === 'eraser' ? styles.toolBtnActive : styles.toolBtn}
+                onClick={() => setActiveTool('eraser')}
+              >
+                Eraser
+              </button>
+              <button
+                className={activeTool === 'pan' ? styles.toolBtnActive : styles.toolBtn}
+                onClick={() => setActiveTool('pan')}
+              >
+                Pan
+              </button>
+            </div>
           </div>
+
+          {(activeTool === 'brush' || activeTool === 'eraser') && (
+            <div className={styles.panelSection}>
+              <label className={styles.panelLabel}>
+                Size <span>{brushRadius}px</span>
+              </label>
+              <input
+                type="range"
+                min={2}
+                max={100}
+                step={1}
+                value={brushRadius}
+                onChange={e => setBrushRadius(parseInt(e.target.value, 10))}
+                style={{ width: '100%' }}
+              />
+            </div>
+          )}
+
           <div className={styles.panelSection}>
-            <label className={styles.panelLabel}>Mask opacity</label>
+            <button
+              className={styles.clearBtn}
+              onClick={handleClear}
+              disabled={maskState.historyIndex < 0 || isGenerating}
+            >
+              Clear Mask
+            </button>
+          </div>
+
+          <div className={styles.panelSection}>
+            <label className={styles.panelLabel}>
+              Opacity <span>{Math.round(maskOpacity * 100)}%</span>
+            </label>
             <input
               type="range"
               min={0}
@@ -350,7 +426,7 @@ export function App(): React.ReactElement {
           </div>
         </aside>
 
-        {/* Canvas */}
+        {/* Canvas Area */}
         <main className={styles.canvasArea}>
           {sourceImage ? (
             <EditorCanvas
@@ -359,6 +435,9 @@ export function App(): React.ReactElement {
               sourceHeight={sourceImage.height}
               maskState={maskState}
               maskOpacity={maskOpacity}
+              activeTool={activeTool}
+              brushRadius={brushRadius}
+              fitTrigger={fitTrigger}
               onMaskOperation={handleMaskOperation}
               isDrawingDisabled={isGenerating}
             />
@@ -369,7 +448,7 @@ export function App(): React.ReactElement {
           )}
         </main>
 
-        {/* Right panel */}
+        {/* Right panel: Edit & Generate */}
         <aside className={styles.rightPanel}>
           <div className={styles.panelSection}>
             <label className={styles.panelLabel}>Provider</label>
@@ -411,6 +490,23 @@ export function App(): React.ReactElement {
             </label>
           </div>
 
+          {editMode === 'strict-mask' && (
+            <div className={styles.panelSection}>
+              <label className={styles.panelLabel}>
+                Feather <span>{featherPixels}px</span>
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={50}
+                step={1}
+                value={featherPixels}
+                onChange={e => setFeatherPixels(parseInt(e.target.value, 10))}
+                style={{ width: '100%' }}
+              />
+            </div>
+          )}
+
           <div className={styles.panelSection}>
             <div className={styles.privacyNote}>
               Your API key (when configured) is used directly from the browser. Images are sent
@@ -438,7 +534,11 @@ export function App(): React.ReactElement {
           {result && (
             <div className={styles.resultSection}>
               <div className={styles.resultMeta}>
-                Done in {result.elapsedMilliseconds}ms ({result.editMode === 'strict-mask' ? 'Strict Mask' : 'AI Mask'})
+                Done in {result.elapsedMilliseconds}ms (
+                {result.editMode === 'strict-mask'
+                  ? `Strict Mask, ${result.featherPixels ?? 0}px feather`
+                  : 'AI Mask'}
+                )
               </div>
               <div className={styles.resultImages}>
                 <div>

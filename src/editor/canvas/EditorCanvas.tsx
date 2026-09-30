@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle } from 'react-konva';
 import Konva from 'konva';
-import { MaskState, MaskOperation } from '../mask/maskModel';
+import { MaskState, MaskOperation, Point } from '../mask/maskModel';
 import { screenToImageCoords, ViewportTransform } from '../viewport/coordinateTransform';
+import type { EditorTool } from '../tools/editorTools';
 
 interface Props {
   sourceUrl: string;
@@ -10,6 +11,9 @@ interface Props {
   sourceHeight: number;
   maskState: MaskState;
   maskOpacity: number;
+  activeTool?: EditorTool;
+  brushRadius?: number; // source image pixels
+  fitTrigger?: number;
   onMaskOperation: (op: MaskOperation) => void;
   isDrawingDisabled?: boolean;
 }
@@ -20,6 +24,9 @@ export function EditorCanvas({
   sourceHeight,
   maskState,
   maskOpacity,
+  activeTool = 'rectangle',
+  brushRadius = 20,
+  fitTrigger,
   onMaskOperation,
   isDrawingDisabled = false,
 }: Props): React.ReactElement {
@@ -30,13 +37,20 @@ export function EditorCanvas({
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
 
-  // Rectangle drawing state
+  // Active drawing stroke / rect
   const [isDrawing, setIsDrawing] = useState(false);
   const isDrawingRef = useRef(false);
-  const [rectStart, setRectStart] = useState({ x: 0, y: 0 }); // image coords
-  const rectStartRef = useRef({ x: 0, y: 0 });
-  const [rectCurrent, setRectCurrent] = useState({ x: 0, y: 0 }); // image coords
 
+  // Rectangle drawing coordinates
+  const [rectStart, setRectStart] = useState<Point>({ x: 0, y: 0 });
+  const rectStartRef = useRef<Point>({ x: 0, y: 0 });
+  const [rectCurrent, setRectCurrent] = useState<Point>({ x: 0, y: 0 });
+
+  // Brush / Eraser stroke points
+  const [strokePoints, setStrokePoints] = useState<Point[]>([]);
+  const strokePointsRef = useRef<Point[]>([]);
+
+  // Pan state
   const isPanning = useRef(false);
   const lastPanPos = useRef({ x: 0, y: 0 });
   const spacePressed = useRef(false);
@@ -59,9 +73,9 @@ export function EditorCanvas({
     return () => observer.disconnect();
   }, []);
 
-  // Fit image to viewport on first load or size change
-  useEffect(() => {
-    if (!containerSize.width || !containerSize.height) return;
+  // Fit image to viewport
+  const fitToViewport = useCallback(() => {
+    if (!containerSize.width || !containerSize.height || !sourceWidth || !sourceHeight) return;
     const scaleX = containerSize.width / sourceWidth;
     const scaleY = containerSize.height / sourceHeight;
     const scale = Math.min(scaleX, scaleY) * 0.9;
@@ -69,7 +83,19 @@ export function EditorCanvas({
     const offsetY = (containerSize.height - sourceHeight * scale) / 2;
     setStageScale(scale);
     setStagePos({ x: offsetX, y: offsetY });
-  }, [sourceWidth, sourceHeight, containerSize]);
+  }, [containerSize, sourceWidth, sourceHeight]);
+
+  // Fit on first load or size change
+  useEffect(() => {
+    fitToViewport();
+  }, [fitToViewport]);
+
+  // Fit triggered externally
+  useEffect(() => {
+    if (fitTrigger !== undefined && fitTrigger > 0) {
+      fitToViewport();
+    }
+  }, [fitTrigger, fitToViewport]);
 
   // Load source image element
   useEffect(() => {
@@ -114,6 +140,8 @@ export function EditorCanvas({
       if (isDrawingRef.current) {
         isDrawingRef.current = false;
         setIsDrawing(false);
+        strokePointsRef.current = [];
+        setStrokePoints([]);
       }
     };
 
@@ -143,27 +171,37 @@ export function EditorCanvas({
   const handleMouseDown = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
       const evt = e.evt;
-      if (evt.button === 1 || spacePressed.current) {
-        // Middle mouse or space = pan
+      const isPanAction = evt.button === 1 || spacePressed.current || activeTool === 'pan';
+
+      if (isPanAction) {
         isPanning.current = true;
         lastPanPos.current = { x: evt.clientX, y: evt.clientY };
         return;
       }
-      if (evt.button !== 0 || isDrawingDisabled) return; // Only primary button for drawing when not disabled
 
-      // Left button = rectangle draw
+      if (evt.button !== 0 || isDrawingDisabled) return;
+
       const transform = getViewportTransform();
       const imgCoords = screenToImageCoords(evt.clientX, evt.clientY, transform);
-      setRectStart(imgCoords);
-      rectStartRef.current = imgCoords;
-      setRectCurrent(imgCoords);
-      setIsDrawing(true);
-      isDrawingRef.current = true;
+
+      if (activeTool === 'rectangle') {
+        setRectStart(imgCoords);
+        rectStartRef.current = imgCoords;
+        setRectCurrent(imgCoords);
+        setIsDrawing(true);
+        isDrawingRef.current = true;
+      } else if (activeTool === 'brush' || activeTool === 'eraser') {
+        const initialPoints = [imgCoords];
+        setStrokePoints(initialPoints);
+        strokePointsRef.current = initialPoints;
+        setIsDrawing(true);
+        isDrawingRef.current = true;
+      }
     },
-    [getViewportTransform, isDrawingDisabled]
+    [getViewportTransform, activeTool, isDrawingDisabled]
   );
 
-  // Global mousemove and mouseup listeners to prevent stuck drawing/panning
+  // Global mousemove and mouseup listeners to prevent stuck state
   useEffect(() => {
     const onWindowMouseMove = (e: MouseEvent) => {
       if (isPanning.current) {
@@ -173,10 +211,17 @@ export function EditorCanvas({
         setStagePos(prev => ({ x: prev.x + dx, y: prev.y + dy }));
         return;
       }
+
       if (isDrawingRef.current) {
         const transform = getViewportTransform();
         const imgCoords = screenToImageCoords(e.clientX, e.clientY, transform);
-        setRectCurrent(imgCoords);
+
+        if (activeTool === 'rectangle') {
+          setRectCurrent(imgCoords);
+        } else if (activeTool === 'brush' || activeTool === 'eraser') {
+          strokePointsRef.current = [...strokePointsRef.current, imgCoords];
+          setStrokePoints(strokePointsRef.current);
+        }
       }
     };
 
@@ -184,21 +229,48 @@ export function EditorCanvas({
       if (isPanning.current) {
         isPanning.current = false;
       }
+
       if (isDrawingRef.current) {
         isDrawingRef.current = false;
         setIsDrawing(false);
 
         const transform = getViewportTransform();
         const imgEnd = screenToImageCoords(e.clientX, e.clientY, transform);
-        const start = rectStartRef.current;
 
-        const x = Math.min(start.x, imgEnd.x);
-        const y = Math.min(start.y, imgEnd.y);
-        const width = Math.abs(imgEnd.x - start.x);
-        const height = Math.abs(imgEnd.y - start.y);
+        if (activeTool === 'rectangle') {
+          const start = rectStartRef.current;
+          const x = Math.min(start.x, imgEnd.x);
+          const y = Math.min(start.y, imgEnd.y);
+          const width = Math.abs(imgEnd.x - start.x);
+          const height = Math.abs(imgEnd.y - start.y);
 
-        if (width > 1 && height > 1) {
-          onMaskOperation({ type: 'rectangle', x, y, width, height, value: 255 });
+          if (width > 1 && height > 1) {
+            onMaskOperation({ type: 'rectangle', x, y, width, height, value: 255 });
+          }
+        } else if (activeTool === 'brush') {
+          const finalPoints = [...strokePointsRef.current, imgEnd];
+          if (finalPoints.length > 0) {
+            onMaskOperation({
+              type: 'brush',
+              points: finalPoints,
+              radius: brushRadius,
+              value: 255,
+            });
+          }
+          setStrokePoints([]);
+          strokePointsRef.current = [];
+        } else if (activeTool === 'eraser') {
+          const finalPoints = [...strokePointsRef.current, imgEnd];
+          if (finalPoints.length > 0) {
+            onMaskOperation({
+              type: 'erase',
+              points: finalPoints,
+              radius: brushRadius,
+              value: 0,
+            });
+          }
+          setStrokePoints([]);
+          strokePointsRef.current = [];
         }
       }
     };
@@ -212,7 +284,7 @@ export function EditorCanvas({
       window.removeEventListener('mouseup', onWindowMouseUp);
       window.removeEventListener('pointerup', onWindowMouseUp);
     };
-  }, [getViewportTransform, onMaskOperation]);
+  }, [getViewportTransform, activeTool, brushRadius, onMaskOperation]);
 
   const handleWheel = useCallback(
     (e: Konva.KonvaEventObject<WheelEvent>) => {
@@ -243,23 +315,39 @@ export function EditorCanvas({
   );
 
   // Active operations from mask history
-  const activeOps = useMemo(
-    () => maskState.operations.slice(0, maskState.historyIndex + 1),
-    [maskState.operations, maskState.historyIndex]
-  );
-
-  // Preview rect in image coords -> stage coords for display
-  const previewRect = isDrawing
-    ? {
-        x: Math.min(rectStart.x, rectCurrent.x),
-        y: Math.min(rectStart.y, rectCurrent.y),
-        width: Math.abs(rectCurrent.x - rectStart.x),
-        height: Math.abs(rectCurrent.y - rectStart.y),
+  const activeOps = useMemo(() => {
+    const active = maskState.operations.slice(0, maskState.historyIndex + 1);
+    // Find last clear op if any
+    let lastClearIndex = -1;
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i]!.type === 'clear') {
+        lastClearIndex = i;
+        break;
       }
-    : null;
+    }
+    return lastClearIndex >= 0 ? active.slice(lastClearIndex + 1) : active;
+  }, [maskState.operations, maskState.historyIndex]);
+
+  // Preview rect in image coords for display
+  const previewRect =
+    isDrawing && activeTool === 'rectangle'
+      ? {
+          x: Math.min(rectStart.x, rectCurrent.x),
+          y: Math.min(rectStart.y, rectCurrent.y),
+          width: Math.abs(rectCurrent.x - rectStart.x),
+          height: Math.abs(rectCurrent.y - rectStart.y),
+        }
+      : null;
+
+  // Cursor style
+  const cursorStyle =
+    activeTool === 'pan' || spacePressed.current ? 'grab' : 'crosshair';
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
+    <div
+      ref={containerRef}
+      style={{ width: '100%', height: '100%', cursor: cursorStyle }}
+    >
       <Stage
         ref={stageRef}
         width={containerSize.width}
@@ -294,11 +382,38 @@ export function EditorCanvas({
                 />
               );
             }
+            if (op.type === 'brush' || op.type === 'erase') {
+              const compOp = op.value === 0 ? 'destination-out' : 'source-over';
+              if (op.points.length === 1) {
+                return (
+                  <Circle
+                    key={index}
+                    x={op.points[0]!.x}
+                    y={op.points[0]!.y}
+                    radius={op.radius}
+                    fill="rgb(220, 50, 50)"
+                    globalCompositeOperation={compOp}
+                  />
+                );
+              }
+              const flat = op.points.flatMap(p => [p.x, p.y]);
+              return (
+                <Line
+                  key={index}
+                  points={flat}
+                  stroke="rgb(220, 50, 50)"
+                  strokeWidth={op.radius * 2}
+                  lineCap="round"
+                  lineJoin="round"
+                  globalCompositeOperation={compOp}
+                />
+              );
+            }
             return null;
           })}
         </Layer>
 
-        {/* Layer 3: UI Interaction Overlay */}
+        {/* Layer 3: Interactive Preview Overlay */}
         <Layer listening={false}>
           {previewRect && (
             <Rect
@@ -310,6 +425,25 @@ export function EditorCanvas({
               stroke="#7aa3ff"
               strokeWidth={1 / stageScale}
             />
+          )}
+
+          {isDrawing && strokePoints.length > 0 && (activeTool === 'brush' || activeTool === 'eraser') && (
+            strokePoints.length === 1 ? (
+              <Circle
+                x={strokePoints[0]!.x}
+                y={strokePoints[0]!.y}
+                radius={brushRadius}
+                fill={activeTool === 'eraser' ? 'rgba(255, 255, 255, 0.5)' : 'rgba(220, 50, 50, 0.6)'}
+              />
+            ) : (
+              <Line
+                points={strokePoints.flatMap(p => [p.x, p.y])}
+                stroke={activeTool === 'eraser' ? 'rgba(255, 255, 255, 0.6)' : 'rgba(220, 50, 50, 0.7)'}
+                strokeWidth={brushRadius * 2}
+                lineCap="round"
+                lineJoin="round"
+              />
+            )
           )}
         </Layer>
       </Stage>
