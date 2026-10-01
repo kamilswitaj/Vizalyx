@@ -206,13 +206,43 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     await expect(redoBtn).toBeEnabled();
     await redoBtn.click();
 
-    // 5. Test Clear Mask and Undo
+    // 5. Test Clear Mask, Undo, and Redo visual consistency on canvas
     const clearBtn = page.getByRole('button', { name: 'Clear Mask' });
     await expect(clearBtn).toBeEnabled();
-    await clearBtn.click();
 
-    // Undo Clear restores the previous mask
+    // Verify mask layer canvas has visible pixels before clear
+    const countMaskPixels = () =>
+      page.evaluate(() => {
+        const canvases = document.querySelectorAll('.konvajs-content canvas');
+        const maskCanvas = canvases[1] as HTMLCanvasElement | undefined;
+        if (!maskCanvas) return 0;
+        const ctx = maskCanvas.getContext('2d');
+        if (!ctx) return 0;
+        const data = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
+        let count = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i]! > 0) count++;
+        }
+        return count;
+      });
+
+    expect(await countMaskPixels()).toBeGreaterThan(0);
+
+    // Clear mask
+    await clearBtn.click();
+    expect(await countMaskPixels()).toBe(0);
+
+    // Undo Clear restores the previous mask visualization
     await undoBtn.click();
+    expect(await countMaskPixels()).toBeGreaterThan(0);
+
+    // Redo Clear empties the mask visualization again
+    await redoBtn.click();
+    expect(await countMaskPixels()).toBe(0);
+
+    // Undo Clear again so subsequent operations have mask context
+    await undoBtn.click();
+    expect(await countMaskPixels()).toBeGreaterThan(0);
 
     // 6. Test Fit button
     const fitBtn = page.getByRole('button', { name: 'Fit' });

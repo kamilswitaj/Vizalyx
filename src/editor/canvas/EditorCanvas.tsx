@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Circle } from 'react-konva';
 import Konva from 'konva';
-import { MaskState, MaskOperation, Point } from '../mask/maskModel';
+import { MaskState, MaskOperation, Point, getActiveMaskOperations } from '../mask/maskModel';
 import { screenToImageCoords, ViewportTransform } from '../viewport/coordinateTransform';
 import type { EditorTool } from '../tools/editorTools';
 
@@ -315,18 +315,7 @@ export function EditorCanvas({
   );
 
   // Active operations from mask history
-  const activeOps = useMemo(() => {
-    const active = maskState.operations.slice(0, maskState.historyIndex + 1);
-    // Find last clear op if any
-    let lastClearIndex = -1;
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i]!.type === 'clear') {
-        lastClearIndex = i;
-        break;
-      }
-    }
-    return lastClearIndex >= 0 ? active.slice(lastClearIndex + 1) : active;
-  }, [maskState.operations, maskState.historyIndex]);
+  const activeOps = useMemo(() => getActiveMaskOperations(maskState), [maskState]);
 
   // Preview rect in image coords for display
   const previewRect =

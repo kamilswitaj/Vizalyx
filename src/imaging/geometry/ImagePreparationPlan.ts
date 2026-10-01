@@ -65,12 +65,53 @@ export function computeOpenAIGeometry(
   let targetWidth = Math.max(grid, Math.round((sourceWidth * scale) / grid) * grid);
   let targetHeight = Math.max(grid, Math.round((sourceHeight * scale) / grid) * grid);
 
+  if (targetWidth > GPT_IMAGE_CONSTRAINTS.MAX_EDGE) {
+    targetWidth = GPT_IMAGE_CONSTRAINTS.MAX_EDGE;
+  }
+  if (targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_EDGE) {
+    targetHeight = GPT_IMAGE_CONSTRAINTS.MAX_EDGE;
+  }
+
+  // Correct aspect ratio if rounding exceeded 3:1 or dropped below 1:3
+  if (targetWidth / targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO) {
+    const maxAllowedWidth =
+      Math.floor((GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO * targetHeight) / grid) * grid;
+    if (maxAllowedWidth >= grid) {
+      targetWidth = maxAllowedWidth;
+    } else {
+      targetHeight = Math.ceil((targetWidth / GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO) / grid) * grid;
+    }
+  } else if (targetWidth / targetHeight < GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO) {
+    const maxAllowedHeight =
+      Math.floor((targetWidth / GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO) / grid) * grid;
+    if (maxAllowedHeight >= grid) {
+      targetHeight = maxAllowedHeight;
+    } else {
+      targetWidth = Math.ceil((targetHeight * GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO) / grid) * grid;
+    }
+  }
+
   // If rounding pushed total pixels below MIN_TOTAL_PIXELS, increment by grid (16)
   while (targetWidth * targetHeight < GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS) {
-    if (targetWidth / targetHeight < sourceWidth / sourceHeight) {
+    const canExpandW =
+      targetWidth + grid <= GPT_IMAGE_CONSTRAINTS.MAX_EDGE &&
+      (targetWidth + grid) / targetHeight <= GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO;
+    const canExpandH =
+      targetHeight + grid <= GPT_IMAGE_CONSTRAINTS.MAX_EDGE &&
+      targetWidth / (targetHeight + grid) >= GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO;
+
+    if (canExpandW && canExpandH) {
+      if ((targetWidth + grid) / targetHeight <= ratio) {
+        targetWidth += grid;
+      } else {
+        targetHeight += grid;
+      }
+    } else if (canExpandW) {
       targetWidth += grid;
-    } else {
+    } else if (canExpandH) {
       targetHeight += grid;
+    } else {
+      break;
     }
   }
 
@@ -80,12 +121,60 @@ export function computeOpenAIGeometry(
     targetWidth > GPT_IMAGE_CONSTRAINTS.MAX_EDGE ||
     targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_EDGE
   ) {
-    if (targetWidth / targetHeight > sourceWidth / sourceHeight && targetWidth > grid) {
+    const canShrinkW =
+      targetWidth - grid >= grid &&
+      (targetWidth - grid) / targetHeight >= GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO;
+    const canShrinkH =
+      targetHeight - grid >= grid &&
+      targetWidth / (targetHeight - grid) <= GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO;
+
+    if (canShrinkW && canShrinkH) {
+      if ((targetWidth - grid) / targetHeight >= ratio) {
+        targetWidth -= grid;
+      } else {
+        targetHeight -= grid;
+      }
+    } else if (canShrinkW) {
       targetWidth -= grid;
-    } else if (targetHeight > grid) {
+    } else if (canShrinkH) {
       targetHeight -= grid;
+    } else if (targetWidth > targetHeight) {
+      targetWidth -= grid;
     } else {
-      break;
+      targetHeight -= grid;
+    }
+  }
+
+  // Final safety checks: ensure bounds are rigidly satisfied
+  while (targetWidth / targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO) {
+    if (
+      targetWidth - grid >= grid &&
+      (targetWidth - grid) * targetHeight >= GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS
+    ) {
+      targetWidth -= grid;
+    } else if (
+      targetHeight + grid <= GPT_IMAGE_CONSTRAINTS.MAX_EDGE &&
+      targetWidth * (targetHeight + grid) <= GPT_IMAGE_CONSTRAINTS.MAX_TOTAL_PIXELS
+    ) {
+      targetHeight += grid;
+    } else {
+      targetWidth -= grid;
+    }
+  }
+
+  while (targetWidth / targetHeight < GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO) {
+    if (
+      targetHeight - grid >= grid &&
+      targetWidth * (targetHeight - grid) >= GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS
+    ) {
+      targetHeight -= grid;
+    } else if (
+      targetWidth + grid <= GPT_IMAGE_CONSTRAINTS.MAX_EDGE &&
+      (targetWidth + grid) * targetHeight <= GPT_IMAGE_CONSTRAINTS.MAX_TOTAL_PIXELS
+    ) {
+      targetWidth += grid;
+    } else {
+      targetHeight -= grid;
     }
   }
 
@@ -102,23 +191,34 @@ export function computeOpenAIGeometry(
   };
 }
 
-export async function resizeImageBlob(
+/**
+ * Prepares the editable source image for OpenAI:
+ * - Canonicalizes format to image/png regardless of whether resize is required
+ * - Ensures dimensions match the prepared target dimensions
+ */
+export async function prepareSourceImageBlob(
   blob: Blob,
   targetWidth: number,
   targetHeight: number
 ): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
-  if (bitmap.width === targetWidth && bitmap.height === targetHeight) {
+  if (
+    blob.type === 'image/png' &&
+    bitmap.width === targetWidth &&
+    bitmap.height === targetHeight
+  ) {
     bitmap.close();
     return blob;
   }
   const canvas = new OffscreenCanvas(targetWidth, targetHeight);
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Cannot get 2D context for image resize');
+  if (!ctx) throw new Error('Cannot get 2D context for image preparation');
   ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
   bitmap.close();
   return canvas.convertToBlob({ type: 'image/png' });
 }
+
+export const resizeImageBlob = prepareSourceImageBlob;
 
 export function resizeRasterMask(
   mask: RasterMask,

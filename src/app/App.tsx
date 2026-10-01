@@ -471,12 +471,10 @@ export function App(): React.ReactElement {
       if (activeProj) {
         try {
           const maskPng = await rasterMaskToBlob(mask);
-          const existingRefIds = referenceImages
-            .filter(r => Boolean(r.assetId))
-            .map(r => r.assetId!);
-          const newRefBlobs = referenceImages
-            .filter(r => !r.assetId)
-            .map(r => r.blob);
+          const references = referenceImages.map(r => ({
+            assetId: r.assetId,
+            blob: r.blob,
+          }));
 
           const savedRun = await saveRun({
             projectId: activeProj.id,
@@ -489,8 +487,7 @@ export function App(): React.ReactElement {
             maskBlob: maskPng,
             providerResultBlob: editResult.resultBlob,
             finalResultBlob: finalBlob,
-            referenceAssetIds: existingRefIds,
-            referenceBlobs: newRefBlobs,
+            references,
             elapsedMilliseconds: editResult.elapsedMilliseconds,
             providerRequestId: editResult.providerRequestId,
           });

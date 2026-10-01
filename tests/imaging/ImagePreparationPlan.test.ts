@@ -50,6 +50,64 @@ describe('ImagePreparationPlan', () => {
     expect(() => computeOpenAIGeometry(300, 900)).not.toThrow();
   });
 
+  it('guarantees valid constraints for boundary near-3:1 and near-1:3 dimensions', () => {
+    const boundaryCases = [
+      [1790, 598],
+      [1271, 3802],
+      [2747, 918],
+      // Mirrored portrait cases
+      [598, 1790],
+      [3802, 1271],
+      [918, 2747],
+      // Exact edge cases
+      [3840, 1280],
+      [1280, 3840],
+      [1440, 480],
+      [480, 1440],
+    ] as const;
+
+    for (const [w, h] of boundaryCases) {
+      const geo = computeOpenAIGeometry(w, h);
+      const ratio = geo.targetWidth / geo.targetHeight;
+      const totalPixels = geo.targetWidth * geo.targetHeight;
+
+      expect(geo.targetWidth % 16).toBe(0);
+      expect(geo.targetHeight % 16).toBe(0);
+      expect(geo.targetWidth).toBeLessThanOrEqual(3840);
+      expect(geo.targetHeight).toBeLessThanOrEqual(3840);
+      expect(totalPixels).toBeGreaterThanOrEqual(655_360);
+      expect(totalPixels).toBeLessThanOrEqual(8_294_400);
+      expect(ratio).toBeGreaterThanOrEqual(1 / 3 - 1e-9);
+      expect(ratio).toBeLessThanOrEqual(3.0 + 1e-9);
+    }
+  });
+
+  it('satisfies all GPT Image 2.5 constraints across representative dimension spectrum', () => {
+    // Test a grid of diverse aspect ratios and sizes
+    const widths = [300, 500, 800, 1024, 1271, 1790, 1920, 2560, 2747, 3840, 4000, 5000];
+    const heights = [300, 480, 598, 768, 918, 1080, 1280, 1440, 2048, 3000, 3802, 4500];
+
+    for (const w of widths) {
+      for (const h of heights) {
+        const inputRatio = w / h;
+        if (inputRatio < 1 / 3 || inputRatio > 3.0) continue;
+
+        const geo = computeOpenAIGeometry(w, h);
+        const ratio = geo.targetWidth / geo.targetHeight;
+        const total = geo.targetWidth * geo.targetHeight;
+
+        expect(geo.targetWidth % 16).toBe(0);
+        expect(geo.targetHeight % 16).toBe(0);
+        expect(geo.targetWidth).toBeLessThanOrEqual(3840);
+        expect(geo.targetHeight).toBeLessThanOrEqual(3840);
+        expect(total).toBeGreaterThanOrEqual(655_360);
+        expect(total).toBeLessThanOrEqual(8_294_400);
+        expect(ratio).toBeGreaterThanOrEqual(1 / 3 - 1e-9);
+        expect(ratio).toBeLessThanOrEqual(3.0 + 1e-9);
+      }
+    }
+  });
+
   it('throws on non-positive dimensions', () => {
     expect(() => computeOpenAIGeometry(0, 100)).toThrow(/sourceWidth/);
     expect(() => computeOpenAIGeometry(100, -5)).toThrow(/sourceHeight/);

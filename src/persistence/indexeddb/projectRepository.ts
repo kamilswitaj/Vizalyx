@@ -17,6 +17,11 @@ export interface LoadedProject {
   runs: RunEntity[];
 }
 
+export interface RunReferenceInput {
+  assetId?: string;
+  blob?: Blob;
+}
+
 export interface SaveRunInput {
   projectId: string;
   providerId: string;
@@ -28,6 +33,7 @@ export interface SaveRunInput {
   maskBlob: Blob;
   providerResultBlob: Blob;
   finalResultBlob: Blob;
+  references?: RunReferenceInput[];
   referenceBlobs?: Blob[];
   referenceAssetIds?: string[];
   elapsedMilliseconds: number;
@@ -143,21 +149,47 @@ export async function saveRun(input: SaveRunInput): Promise<RunEntity> {
     createdAt: now,
   };
 
-  const referenceAssets: AssetEntity[] = (input.referenceBlobs ?? []).map(blob => ({
-    id: generateId(),
-    projectId: input.projectId,
-    kind: 'reference',
-    blob,
-    mimeType: blob.type || 'image/png',
-    width: 0,
-    height: 0,
-    createdAt: now,
-  }));
+  const referenceAssets: AssetEntity[] = [];
+  const allReferenceAssetIds: string[] = [];
 
-  const allReferenceAssetIds = [
-    ...(input.referenceAssetIds ?? []),
-    ...referenceAssets.map(a => a.id),
-  ];
+  if (input.references && input.references.length > 0) {
+    for (const ref of input.references) {
+      if (ref.assetId) {
+        allReferenceAssetIds.push(ref.assetId);
+      } else if (ref.blob) {
+        const id = generateId();
+        referenceAssets.push({
+          id,
+          projectId: input.projectId,
+          kind: 'reference',
+          blob: ref.blob,
+          mimeType: ref.blob.type || 'image/png',
+          width: 0,
+          height: 0,
+          createdAt: now,
+        });
+        allReferenceAssetIds.push(id);
+      }
+    }
+  } else {
+    for (const id of input.referenceAssetIds ?? []) {
+      allReferenceAssetIds.push(id);
+    }
+    for (const blob of input.referenceBlobs ?? []) {
+      const id = generateId();
+      referenceAssets.push({
+        id,
+        projectId: input.projectId,
+        kind: 'reference',
+        blob,
+        mimeType: blob.type || 'image/png',
+        width: 0,
+        height: 0,
+        createdAt: now,
+      });
+      allReferenceAssetIds.push(id);
+    }
+  }
 
   const run: RunEntity = {
     id: runId,

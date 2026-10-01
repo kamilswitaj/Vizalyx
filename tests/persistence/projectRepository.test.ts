@@ -159,6 +159,91 @@ describe('projectRepository', () => {
     expect(refAssetCount).toBe(1);
   });
 
+  it('preserves exact logical reference ordering with mixed new and existing references', async () => {
+    const sourceBlob = new Blob(['source'], { type: 'image/png' });
+    const { project } = await createProject('Mixed Reference Ordering', sourceBlob, 400, 400);
+
+    const maskBlob = new Blob(['mask'], { type: 'image/png' });
+    const resultBlob = new Blob(['result'], { type: 'image/png' });
+
+    const refBlob1 = new Blob(['ref-1-initial'], { type: 'image/png' });
+    const refBlob2 = new Blob(['ref-2-initial'], { type: 'image/png' });
+
+    // Initial run with two references
+    const initialRun = await saveRun({
+      projectId: project.id,
+      providerId: 'fake',
+      modelId: 'fake-model',
+      quality: 'standard',
+      prompt: 'initial',
+      editMode: 'strict-mask',
+      featherPixels: 0,
+      maskBlob,
+      providerResultBlob: resultBlob,
+      finalResultBlob: resultBlob,
+      references: [{ blob: refBlob1 }, { blob: refBlob2 }],
+      elapsedMilliseconds: 100,
+    });
+
+    const [existingId1, existingId2] = initialRun.referenceAssetIds;
+    expect(existingId1).toBeDefined();
+    expect(existingId2).toBeDefined();
+
+    // Now test mixed ordering: newA, existing1, newB, existing2
+    const newBlobA = new Blob(['new-A-content'], { type: 'image/png' });
+    const newBlobB = new Blob(['new-B-content'], { type: 'image/png' });
+
+    const mixedRun = await saveRun({
+      projectId: project.id,
+      providerId: 'fake',
+      modelId: 'fake-model',
+      quality: 'standard',
+      prompt: 'mixed ordering test',
+      editMode: 'strict-mask',
+      featherPixels: 0,
+      maskBlob,
+      providerResultBlob: resultBlob,
+      finalResultBlob: resultBlob,
+      references: [
+        { blob: newBlobA },
+        { assetId: existingId1 },
+        { blob: newBlobB },
+        { assetId: existingId2 },
+      ],
+      elapsedMilliseconds: 100,
+    });
+
+    // 1. Verify returned IDs has length 4 and exact position matching
+    expect(mixedRun.referenceAssetIds).toHaveLength(4);
+    const [mixedId0, mixedId1, mixedId2, mixedId3] = mixedRun.referenceAssetIds;
+
+    expect(mixedId1).toBe(existingId1);
+    expect(mixedId3).toBe(existingId2);
+    expect(mixedId0).not.toBe(existingId1);
+    expect(mixedId2).not.toBe(existingId2);
+
+    // 2. Verify restored blobs match content and ordering
+    const blob0 = await getAssetBlob(mixedId0!);
+    const blob1 = await getAssetBlob(mixedId1!);
+    const blob2 = await getAssetBlob(mixedId2!);
+    const blob3 = await getAssetBlob(mixedId3!);
+
+    const readText = (b: Blob | null): Promise<string> => {
+      if (!b) return Promise.resolve('');
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(b);
+      });
+    };
+
+    expect(await readText(blob0)).toBe('new-A-content');
+    expect(await readText(blob1)).toBe('ref-1-initial');
+    expect(await readText(blob2)).toBe('new-B-content');
+    expect(await readText(blob3)).toBe('ref-2-initial');
+  });
+
   it('lists projects sorted by updatedAt', async () => {
     const blob = new Blob(['img'], { type: 'image/png' });
     await createProject('Project A', blob, 100, 100);

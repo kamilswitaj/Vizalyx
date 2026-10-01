@@ -166,6 +166,150 @@ describe('OpenAIImageEditProvider', () => {
       expect(body.get('response_format')).toBeNull();
     });
 
+    describe('source image canonicalization and format contract', () => {
+      const fakeB64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const mockResponse = { data: [{ b64_json: fakeB64 }] };
+
+      const captureBody = async (req: ImageEditRequest): Promise<FormData> => {
+        let captured: FormData | null = null;
+        globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+          captured = init.body as FormData;
+          return Promise.resolve(
+            new Response(JSON.stringify(mockResponse), { status: 200 })
+          );
+        });
+        await provider.edit(req, { apiKey: 'sk-test' });
+        return captured!;
+      };
+
+      it('preserves PNG MIME type and dimensions when no resize is needed', async () => {
+        const sourceBlob = new Blob(['png-bytes'], { type: 'image/png' });
+        Object.assign(sourceBlob, { width: 1024, height: 768 });
+        const mask = {
+          width: 1024,
+          height: 768,
+          data: new Uint8ClampedArray(1024 * 768),
+        };
+
+        const body = await captureBody({
+          ...validRequest,
+          sourceBlob,
+          mask,
+        });
+
+        const images = body.getAll('image[]') as Blob[];
+        const source = images[0]!;
+        const maskBlob = body.get('mask') as Blob;
+
+        expect(source.type).toBe('image/png');
+        expect(maskBlob.type).toBe('image/png');
+        expect(body.get('size')).toBe('1024x768');
+      });
+
+      it('canonicalizes JPEG source to image/png when no resize is needed', async () => {
+        const sourceBlob = new Blob(['jpeg-bytes'], { type: 'image/jpeg' });
+        Object.assign(sourceBlob, { width: 1024, height: 768 });
+        const mask = {
+          width: 1024,
+          height: 768,
+          data: new Uint8ClampedArray(1024 * 768),
+        };
+
+        const body = await captureBody({
+          ...validRequest,
+          sourceBlob,
+          mask,
+        });
+
+        const images = body.getAll('image[]') as Blob[];
+        const source = images[0]!;
+        const maskBlob = body.get('mask') as Blob;
+
+        expect(source.type).toBe('image/png');
+        expect(maskBlob.type).toBe('image/png');
+        expect(body.get('size')).toBe('1024x768');
+      });
+
+      it('canonicalizes WebP source to image/png when no resize is needed', async () => {
+        const sourceBlob = new Blob(['webp-bytes'], { type: 'image/webp' });
+        Object.assign(sourceBlob, { width: 1024, height: 768 });
+        const mask = {
+          width: 1024,
+          height: 768,
+          data: new Uint8ClampedArray(1024 * 768),
+        };
+
+        const body = await captureBody({
+          ...validRequest,
+          sourceBlob,
+          mask,
+        });
+
+        const images = body.getAll('image[]') as Blob[];
+        const source = images[0]!;
+        const maskBlob = body.get('mask') as Blob;
+
+        expect(source.type).toBe('image/png');
+        expect(maskBlob.type).toBe('image/png');
+        expect(body.get('size')).toBe('1024x768');
+      });
+
+      it('converts and resizes source to image/png matching mask dimensions when resize is required', async () => {
+        const sourceBlob = new Blob(['large-jpeg-bytes'], { type: 'image/jpeg' });
+        Object.assign(sourceBlob, { width: 4000, height: 3000 });
+        const mask = {
+          width: 4000,
+          height: 3000,
+          data: new Uint8ClampedArray(4000 * 3000),
+        };
+
+        const body = await captureBody({
+          ...validRequest,
+          sourceBlob,
+          mask,
+        });
+
+        const images = body.getAll('image[]') as Blob[];
+        const source = images[0]!;
+        const maskBlob = body.get('mask') as Blob;
+
+        expect(source.type).toBe('image/png');
+        expect(maskBlob.type).toBe('image/png');
+
+        const sizeStr = body.get('size') as string;
+        const [targetW, targetH] = sizeStr.split('x').map(Number);
+        expect(targetW! % 16).toBe(0);
+        expect(targetH! % 16).toBe(0);
+        expect(targetW! * targetH!).toBeLessThanOrEqual(8_294_400);
+      });
+
+      it('keeps source image first in image[] and leaves reference images untranscoded', async () => {
+        const sourceBlob = new Blob(['jpeg-source'], { type: 'image/jpeg' });
+        Object.assign(sourceBlob, { width: 1024, height: 768 });
+        const refBlob = new Blob(['jpeg-reference'], { type: 'image/jpeg' });
+        const mask = {
+          width: 1024,
+          height: 768,
+          data: new Uint8ClampedArray(1024 * 768),
+        };
+
+        const body = await captureBody({
+          ...validRequest,
+          sourceBlob,
+          mask,
+          referenceBlobs: [refBlob],
+        });
+
+        const images = body.getAll('image[]') as Blob[];
+        expect(images).toHaveLength(2);
+        // Source image is first and converted to PNG
+        expect(images[0]!.type).toBe('image/png');
+        // Reference image is second and untranscoded (retains original format)
+        expect(images[1]!.type).toBe('image/jpeg');
+      });
+    });
+
     it('handles 401 error gracefully without exposing key', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: { message: 'Incorrect API key' } }), {

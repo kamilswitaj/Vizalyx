@@ -146,6 +146,25 @@ function drawStroke(
 }
 
 /**
+ * Returns the sequence of active operations affecting the current mask state.
+ * Any operations occurring prior to the most recent active 'clear' operation
+ * are discarded, preserving identical semantics between lightweight canvas rendering
+ * and full rasterization.
+ */
+export function getActiveMaskOperations(state: MaskState): MaskOperation[] {
+  if (state.historyIndex < 0) return [];
+  const active = state.operations.slice(0, state.historyIndex + 1);
+  let lastClearIndex = -1;
+  for (let i = active.length - 1; i >= 0; i--) {
+    if (active[i]!.type === 'clear') {
+      lastClearIndex = i;
+      break;
+    }
+  }
+  return lastClearIndex >= 0 ? active.slice(lastClearIndex + 1) : active;
+}
+
+/**
  * Rasterize the current mask state into a single-channel Uint8ClampedArray.
  * Width and height are in source image pixels.
  */
@@ -155,7 +174,7 @@ export function rasterizeMask(
   height: number
 ): Uint8ClampedArray {
   const data = new Uint8ClampedArray(width * height); // all zeros by default
-  const activeOps = state.operations.slice(0, state.historyIndex + 1);
+  const activeOps = getActiveMaskOperations(state);
 
   for (const op of activeOps) {
     if (op.type === 'clear') {

@@ -27,12 +27,12 @@ It enables precise, controllable image editing by combining visual selection too
   - Independent byte-level compositor operating directly on raw pixel buffers.
   - Value `0`: guarantees exact byte-copy of the original source pixel.
   - Value `255`: takes the generated AI pixel.
-  - Configurable edge feathering ($0\text{px} - 32\text{px}$) for natural, seamless boundaries.
+  - Configurable edge feathering ($0\text{px} - 50\text{px}$) for natural, seamless boundaries.
   - Automatically transforms provider results back into source coordinate space before compositing.
 - **AI Providers**:
   - **Fake (Dev/Test)**: Fully deterministic, offline provider for development and automated testing without API costs.
-  - **OpenAI GPT Image 2.5**: Official browser-direct integration supporting `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` with `standard` and `high` quality.
-  - Conforms to OpenAI's official multipart contract: ordered `image[]` (source image first, reference images following), explicit `size`, inverted alpha `mask`, and automatic dimension normalization (multiples of 16, aspect ratios up to 3:1, total pixel bounds).
+  - **OpenAI GPT Image 2.5**: Official browser-direct integration supporting `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` with `low`, `medium`, `high`, `xhigh`, and `max` qualities.
+  - Conforms to OpenAI's official multipart contract: canonical PNG source image, matching PNG mask with alpha channel, ordered `image[]` (source image first, reference images following), explicit `size`, and automatic dimension normalization (multiples of 16, aspect ratios $1:3 - 3:1$, total pixel bounds).
 - **Run History & Parameter/Mask Restoration**:
   - Automatically saves every generation as an immutable Run in IndexedDB.
   - **Load Params**: Restores exact prompt, provider, model, quality, feathering, reference images, and the exact raster mask from the historical run.
@@ -93,12 +93,12 @@ Vizalyx is configured to deploy automatically via GitHub Actions upon every push
 1. Open your repository on GitHub: `https://github.com/kamilswitaj/Vizalyx`
 2. Navigate to **Settings** $\rightarrow$ **Pages**.
 3. Under **Build and deployment** $\rightarrow$ **Source**, select **"GitHub Actions"**.
-4. Under **Custom domain**, enter:
+4. Under **Custom domain**, enter your domain:
    ```
    vizalyx.izabelaswitaj.pl
    ```
-   (A `CNAME` file is provided in `public/CNAME` and included in every build artifact).
-5. The deployment workflow will automatically publish the static PWA to:
+   and ensure DNS (CNAME pointing to your `<username>.github.io` or configured records) is verified. GitHub Pages natively manages the TLS certificate and routing for this custom domain directly through repository settings.
+5. The deployment workflow publishes the static PWA to root-path:
    ```
    https://vizalyx.izabelaswitaj.pl/
    ```
@@ -109,19 +109,22 @@ Vizalyx is configured to deploy automatically via GitHub Actions upon every push
 
 Automated test suites and CI runs do **not** invoke paid external AI APIs.
 
-To perform an end-to-end verification against the live OpenAI GPT Image 2.5 API using your own API key:
+To perform an end-to-end verification against the live OpenAI GPT Image 2.5 API using your own API key in a real Chromium browser:
 
 ```powershell
 # Windows PowerShell / CMD
-cmd /c "set OPENAI_API_KEY=sk-your-openai-api-key && npx vitest run tests/providers/openAiLiveSmoke.manual.test.ts"
+cmd /c "set OPENAI_API_KEY=sk-your-openai-api-key&& npm run test:e2e:live"
 ```
 
-The test will:
-1. Generate a test source image and mask.
-2. Submit the multipart request directly to `https://api.openai.com/v1/images/edits`.
-3. Assert that a valid image PNG result is returned and processed.
+This test:
+1. Launches the Vizalyx application in a real Chromium browser instance.
+2. Injects the API key into in-memory Settings and validates connectivity.
+3. Selects the official OpenAI provider and model.
+4. Generates a source image, creates an interactive mask, and sends a prompt.
+5. Verifies the multipart request succeeds against `https://api.openai.com/v1/images/edits`.
+6. Asserts that the Strict Mask result is rendered accurately with matching source dimensions.
 
-If `OPENAI_API_KEY` is not present, this test is safely skipped.
+If `OPENAI_API_KEY` is not set or when running in CI, this test is safely skipped.
 
 ---
 

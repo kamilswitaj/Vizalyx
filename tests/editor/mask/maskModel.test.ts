@@ -6,6 +6,7 @@ import {
   redo,
   clearMask,
   rasterizeMask,
+  getActiveMaskOperations,
 } from '../../../src/editor/mask/maskModel';
 
 describe('maskModel', () => {
@@ -205,5 +206,45 @@ describe('maskModel', () => {
     });
     const erased = rasterizeMask(state, 10, 10);
     expect(erased[5 * 10 + 5]).toBe(0);
+  });
+
+  it('getActiveMaskOperations correctly filters out operations prior to clear, with undo and redo support', () => {
+    let state = createEmptyMask();
+    expect(getActiveMaskOperations(state)).toEqual([]);
+
+    // 1. Add Brush operation
+    const brushOp = {
+      type: 'brush' as const,
+      points: [{ x: 5, y: 5 }, { x: 10, y: 10 }],
+      radius: 4,
+      value: 255 as const,
+    };
+    state = applyOperation(state, brushOp);
+    expect(getActiveMaskOperations(state)).toEqual([brushOp]);
+
+    // 2. Clear mask
+    state = clearMask(state);
+    expect(getActiveMaskOperations(state)).toEqual([]);
+
+    // 3. Undo clear: restores brushOp
+    state = undo(state);
+    expect(getActiveMaskOperations(state)).toEqual([brushOp]);
+
+    // 4. Redo clear: clears again
+    state = redo(state);
+    expect(getActiveMaskOperations(state)).toEqual([]);
+
+    // 5. Add new rectangle after clear
+    const rectOp = {
+      type: 'rectangle' as const,
+      x: 1,
+      y: 1,
+      width: 5,
+      height: 5,
+      value: 255 as const,
+    };
+    state = applyOperation(state, rectOp);
+    // Only rectOp should be active, not brushOp
+    expect(getActiveMaskOperations(state)).toEqual([rectOp]);
   });
 });

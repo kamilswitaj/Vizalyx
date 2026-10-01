@@ -9,7 +9,7 @@ import type {
 import { convertToOpenAIMaskBlob } from './OpenAIMaskAdapter';
 import {
   computeOpenAIGeometry,
-  resizeImageBlob,
+  prepareSourceImageBlob,
   resizeRasterMask,
   restoreResultToSourceSpace,
 } from '../../imaging/geometry/ImagePreparationPlan';
@@ -107,17 +107,15 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
     const { width: srcWidth, height: srcHeight } = request.mask;
     const geometry = computeOpenAIGeometry(srcWidth, srcHeight);
 
-    let preparedSourceBlob = request.sourceBlob;
-    let preparedMask = request.mask;
-
-    if (geometry.needsResize) {
-      preparedSourceBlob = await resizeImageBlob(
-        request.sourceBlob,
-        geometry.targetWidth,
-        geometry.targetHeight
-      );
-      preparedMask = resizeRasterMask(request.mask, geometry.targetWidth, geometry.targetHeight);
-    }
+    // Canonicalize the editable source image to PNG matching target dimensions
+    const preparedSourceBlob = await prepareSourceImageBlob(
+      request.sourceBlob,
+      geometry.targetWidth,
+      geometry.targetHeight
+    );
+    const preparedMask = geometry.needsResize
+      ? resizeRasterMask(request.mask, geometry.targetWidth, geometry.targetHeight)
+      : request.mask;
 
     // 2. Mask conversion with inverted alpha for OpenAI API
     const openAiMaskBlob = await convertToOpenAIMaskBlob(preparedMask);
