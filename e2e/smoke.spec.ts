@@ -66,7 +66,16 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     });
     await expect(page.getByAltText('Reference')).toBeVisible();
 
-    // 5. Verify Strict Mask mode is selected
+    // 5. Verify default provider is OpenAI and default model is GPT Image 2.5 Sunburst
+    const providerSelect = page.getByTestId('provider-select');
+    await expect(providerSelect).toHaveValue('openai');
+    const modelSelect = page.getByTestId('model-select');
+    await expect(modelSelect).toHaveValue('gpt-image-2.5-sunburst');
+
+    // Switch to Fake Provider for deterministic offline smoke generation test
+    await providerSelect.selectOption('fake');
+
+    // 5b. Verify Strict Mask mode is selected
     const strictRadio = page.getByLabel('Strict Mask');
     await expect(strictRadio).toBeChecked();
 

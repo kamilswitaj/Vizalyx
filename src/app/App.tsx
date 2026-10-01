@@ -114,9 +114,9 @@ export function App(): React.ReactElement {
 
   // Provider & Model configuration
   const descriptors = useMemo(() => registry.getDescriptors(), []);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('fake');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>('openai');
   const selectedProvider = useMemo(
-    () => registry.get(selectedProviderId) ?? fakeProvider,
+    () => registry.get(selectedProviderId) ?? openAiProvider,
     [selectedProviderId]
   );
   const providerDescriptor = useMemo(
@@ -125,7 +125,7 @@ export function App(): React.ReactElement {
   );
 
   const [selectedModelId, setSelectedModelId] = useState<string>(
-    () => providerDescriptor.models[0]?.id ?? 'fake-model'
+    () => providerDescriptor.models[0]?.id ?? 'gpt-image-2.5-sunburst'
   );
 
   // Sync selected model when provider changes
@@ -914,8 +914,10 @@ export function App(): React.ReactElement {
         {/* Right panel: Edit & Generate & History */}
         <aside className={styles.rightPanel}>
           <div className={styles.panelSection}>
-            <label className={styles.panelLabel}>Provider</label>
+            <label className={styles.panelLabel} htmlFor="provider-select">Provider</label>
             <select
+              id="provider-select"
+              data-testid="provider-select"
               className={styles.selectInput}
               value={selectedProviderId}
               onChange={e => setSelectedProviderId(e.target.value)}
@@ -929,8 +931,10 @@ export function App(): React.ReactElement {
           </div>
 
           <div className={styles.panelSection}>
-            <label className={styles.panelLabel}>Model</label>
+            <label className={styles.panelLabel} htmlFor="model-select">Model</label>
             <select
+              id="model-select"
+              data-testid="model-select"
               className={styles.selectInput}
               value={selectedModelId}
               onChange={e => setSelectedModelId(e.target.value)}
@@ -944,8 +948,10 @@ export function App(): React.ReactElement {
           </div>
 
           <div className={styles.panelSection}>
-            <label className={styles.panelLabel}>Quality</label>
+            <label className={styles.panelLabel} htmlFor="quality-select">Quality</label>
             <select
+              id="quality-select"
+              data-testid="quality-select"
               className={styles.selectInput}
               value={selectedQuality}
               onChange={e => setSelectedQuality(e.target.value)}
