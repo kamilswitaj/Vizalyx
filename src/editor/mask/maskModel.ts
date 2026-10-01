@@ -31,11 +31,20 @@ export type ClearOperation = {
   value: 0;
 };
 
+export type RasterOperation = {
+  type: 'raster';
+  data: Uint8ClampedArray; // width * height grayscale
+  width: number;
+  height: number;
+  image?: CanvasImageSource;
+};
+
 export type MaskOperation =
   | RectangleOperation
   | BrushOperation
   | EraseOperation
-  | ClearOperation;
+  | ClearOperation
+  | RasterOperation;
 
 export interface MaskState {
   operations: MaskOperation[];
@@ -164,6 +173,20 @@ export function rasterizeMask(
       }
     } else if (op.type === 'brush' || op.type === 'erase') {
       drawStroke(data, width, height, op.points, op.radius, op.value);
+    } else if (op.type === 'raster') {
+      if (op.width === width && op.height === height) {
+        data.set(op.data);
+      } else {
+        for (let row = 0; row < height; row++) {
+          const srcRow = Math.min(op.height - 1, Math.floor((row / height) * op.height));
+          const rowOffset = row * width;
+          const srcOffset = srcRow * op.width;
+          for (let col = 0; col < width; col++) {
+            const srcCol = Math.min(op.width - 1, Math.floor((col / width) * op.width));
+            data[rowOffset + col] = op.data[srcOffset + srcCol]!;
+          }
+        }
+      }
     }
   }
 

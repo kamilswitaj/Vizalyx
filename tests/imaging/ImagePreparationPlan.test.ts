@@ -21,19 +21,33 @@ describe('ImagePreparationPlan', () => {
     expect(geo.needsResize).toBe(true);
   });
 
-  it('downscales large images above maxDimension while preserving aspect ratio', () => {
-    const geo = computeOpenAIGeometry(4000, 3000, 2048);
-    expect(geo.targetWidth).toBeLessThanOrEqual(2048);
-    expect(geo.targetHeight).toBeLessThanOrEqual(2048);
+  it('downscales large images exceeding GPT Image limits while preserving aspect ratio', () => {
+    const geo = computeOpenAIGeometry(4000, 3000);
+    expect(geo.targetWidth).toBeLessThanOrEqual(3840);
+    expect(geo.targetHeight).toBeLessThanOrEqual(3840);
+    expect(geo.targetWidth * geo.targetHeight).toBeLessThanOrEqual(8_294_400);
+    expect(geo.targetWidth * geo.targetHeight).toBeGreaterThanOrEqual(655_360);
     expect(geo.targetWidth % 16).toBe(0);
     expect(geo.targetHeight % 16).toBe(0);
     // Aspect ratio roughly 4:3
     expect(geo.targetWidth / geo.targetHeight).toBeCloseTo(4 / 3, 1);
   });
 
-  it('rejects extreme aspect ratios with clear validation error', () => {
-    expect(() => computeOpenAIGeometry(100, 1000)).toThrow(/Image aspect ratio/);
-    expect(() => computeOpenAIGeometry(1000, 100)).toThrow(/Image aspect ratio/);
+  it('upscales small images below minimum pixel limit while preserving aspect ratio', () => {
+    const geo = computeOpenAIGeometry(200, 200);
+    expect(geo.targetWidth * geo.targetHeight).toBeGreaterThanOrEqual(655_360);
+    expect(geo.targetWidth * geo.targetHeight).toBeLessThanOrEqual(8_294_400);
+    expect(geo.targetWidth % 16).toBe(0);
+    expect(geo.targetHeight % 16).toBe(0);
+    expect(geo.targetWidth).toBe(geo.targetHeight);
+  });
+
+  it('rejects aspect ratios exceeding 3:1 limit with clear validation error', () => {
+    expect(() => computeOpenAIGeometry(100, 350)).toThrow(/Image aspect ratio/);
+    expect(() => computeOpenAIGeometry(350, 100)).toThrow(/Image aspect ratio/);
+    // 3:1 and 1:3 are acceptable
+    expect(() => computeOpenAIGeometry(900, 300)).not.toThrow();
+    expect(() => computeOpenAIGeometry(300, 900)).not.toThrow();
   });
 
   it('throws on non-positive dimensions', () => {

@@ -409,6 +409,19 @@ export function EditorCanvas({
                 />
               );
             }
+            if (op.type === 'raster') {
+              if (op.image) {
+                return (
+                  <KonvaImage
+                    key={index}
+                    image={op.image}
+                    width={op.width}
+                    height={op.height}
+                  />
+                );
+              }
+              return null;
+            }
             return null;
           })}
         </Layer>

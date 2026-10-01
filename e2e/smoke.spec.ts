@@ -224,5 +224,37 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     await panBtn.click();
     await expect(panBtn).toHaveClass(/toolBtnActive/);
   });
+
+  test('supports New button to clear workspace back to zero', async ({ page }) => {
+    await page.goto('./');
+    const dataUrl = await page.evaluate(() => {
+      const c = document.createElement('canvas');
+      c.width = 100;
+      c.height = 100;
+      const ctx = c.getContext('2d');
+      if (!ctx) throw new Error('No ctx');
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(0, 0, 100, 100);
+      return c.toDataURL('image/png');
+    });
+
+    const fileInput = page.getByTestId('file-input');
+    await fileInput.setInputFiles({
+      name: 'test-clear.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(dataUrl.split(',')[1]!, 'base64'),
+    });
+
+    // Verify canvas is mounted
+    await expect(page.locator('.konvajs-content')).toBeVisible();
+
+    // Click New button
+    const newBtn = page.getByRole('button', { name: 'New' });
+    await expect(newBtn).toBeVisible();
+    await newBtn.click();
+
+    // Verify workspace is reset back to zero (drop zone is visible)
+    await expect(page.getByText('Open, paste (Ctrl+V), or drag & drop an image to start')).toBeVisible();
+  });
 });
 

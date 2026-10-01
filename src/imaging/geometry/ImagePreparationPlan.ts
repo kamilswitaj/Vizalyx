@@ -10,17 +10,26 @@ export interface PreparedGeometry {
   readonly needsResize: boolean;
 }
 
+export const GPT_IMAGE_CONSTRAINTS = {
+  MIN_TOTAL_PIXELS: 655_360,
+  MAX_TOTAL_PIXELS: 8_294_400,
+  MAX_EDGE: 3840,
+  MIN_ASPECT_RATIO: 1 / 3, // 1:3 (0.333...)
+  MAX_ASPECT_RATIO: 3.0,   // 3:1
+  GRID_SIZE: 16,
+} as const;
+
 /**
- * Computes target dimensions adhering to OpenAI model constraints:
- * - Multiples of 16
- * - Max edge constraint (default 2048)
- * - Preserves aspect ratio without cropping
- * - Validates aspect ratio (0.25 to 4.0)
+ * Computes target dimensions adhering to OpenAI GPT Image 2.5 constraints:
+ * - Dimensions divisible by 16
+ * - Maximum aspect ratio 3:1 (0.333... to 3.0)
+ * - Maximum edge 3840 pixels
+ * - Total pixel count between 655,360 and 8,294,400 pixels
+ * - Preserves aspect ratio without silent cropping
  */
 export function computeOpenAIGeometry(
   sourceWidth: number,
-  sourceHeight: number,
-  maxDimension = 2048
+  sourceHeight: number
 ): PreparedGeometry {
   if (!Number.isInteger(sourceWidth) || sourceWidth <= 0) {
     throw new Error(`sourceWidth must be a positive integer, got ${sourceWidth}`);
@@ -30,21 +39,55 @@ export function computeOpenAIGeometry(
   }
 
   const ratio = sourceWidth / sourceHeight;
-  if (ratio < 0.25 || ratio > 4.0) {
+  if (ratio < GPT_IMAGE_CONSTRAINTS.MIN_ASPECT_RATIO || ratio > GPT_IMAGE_CONSTRAINTS.MAX_ASPECT_RATIO) {
     throw new Error(
-      `Image aspect ratio (${ratio.toFixed(2)}) is unsupported. Please use an image with aspect ratio between 1:4 and 4:1.`
+      `Image aspect ratio (${ratio.toFixed(2)}) exceeds the 3:1 limit supported by GPT Image 2.5. Please use an image with an aspect ratio between 1:3 and 3:1.`
     );
   }
 
   let scale = 1.0;
-  const maxSource = Math.max(sourceWidth, sourceHeight);
-  if (maxSource > maxDimension) {
-    scale = maxDimension / maxSource;
+  const currentPixels = sourceWidth * sourceHeight;
+  const currentMaxEdge = Math.max(sourceWidth, sourceHeight);
+
+  if (currentPixels < GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS) {
+    scale = Math.sqrt(GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS / currentPixels);
+  } else if (currentPixels > GPT_IMAGE_CONSTRAINTS.MAX_TOTAL_PIXELS) {
+    scale = Math.sqrt(GPT_IMAGE_CONSTRAINTS.MAX_TOTAL_PIXELS / currentPixels);
   }
 
-  // Multiples of 16
-  const targetWidth = Math.max(16, Math.round((sourceWidth * scale) / 16) * 16);
-  const targetHeight = Math.max(16, Math.round((sourceHeight * scale) / 16) * 16);
+  // Ensure max edge doesn't exceed 3840px
+  if (currentMaxEdge * scale > GPT_IMAGE_CONSTRAINTS.MAX_EDGE) {
+    scale = GPT_IMAGE_CONSTRAINTS.MAX_EDGE / currentMaxEdge;
+  }
+
+  // Snap to multiples of 16
+  const grid = GPT_IMAGE_CONSTRAINTS.GRID_SIZE;
+  let targetWidth = Math.max(grid, Math.round((sourceWidth * scale) / grid) * grid);
+  let targetHeight = Math.max(grid, Math.round((sourceHeight * scale) / grid) * grid);
+
+  // If rounding pushed total pixels below MIN_TOTAL_PIXELS, increment by grid (16)
+  while (targetWidth * targetHeight < GPT_IMAGE_CONSTRAINTS.MIN_TOTAL_PIXELS) {
+    if (targetWidth / targetHeight < sourceWidth / sourceHeight) {
+      targetWidth += grid;
+    } else {
+      targetHeight += grid;
+    }
+  }
+
+  // If rounding pushed total pixels above MAX_TOTAL_PIXELS or edge above MAX_EDGE, decrement by grid
+  while (
+    targetWidth * targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_TOTAL_PIXELS ||
+    targetWidth > GPT_IMAGE_CONSTRAINTS.MAX_EDGE ||
+    targetHeight > GPT_IMAGE_CONSTRAINTS.MAX_EDGE
+  ) {
+    if (targetWidth / targetHeight > sourceWidth / sourceHeight && targetWidth > grid) {
+      targetWidth -= grid;
+    } else if (targetHeight > grid) {
+      targetHeight -= grid;
+    } else {
+      break;
+    }
+  }
 
   const needsResize = targetWidth !== sourceWidth || targetHeight !== sourceHeight;
 

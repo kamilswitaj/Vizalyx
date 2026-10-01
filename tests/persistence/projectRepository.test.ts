@@ -101,6 +101,64 @@ describe('projectRepository', () => {
     expect(refAsset2).toBeInstanceOf(Blob);
   });
 
+  it('reuses existing reference assets without duplicating assets in storage', async () => {
+    const sourceBlob = new Blob(['source'], { type: 'image/png' });
+    const { project } = await createProject('Deduplication Test', sourceBlob, 400, 400);
+
+    const maskBlob = new Blob(['mask'], { type: 'image/png' });
+    const resultBlob = new Blob(['result'], { type: 'image/png' });
+    const refBlob = new Blob(['ref-bytes'], { type: 'image/png' });
+
+    // Run 1 creates a new reference asset
+    const run1 = await saveRun({
+      projectId: project.id,
+      providerId: 'fake',
+      modelId: 'fake-model',
+      quality: 'standard',
+      prompt: 'first run',
+      editMode: 'strict-mask',
+      featherPixels: 0,
+      maskBlob,
+      providerResultBlob: resultBlob,
+      finalResultBlob: resultBlob,
+      referenceBlobs: [refBlob],
+      elapsedMilliseconds: 100,
+    });
+
+    const initialAssetCount = await db.assets.where('projectId').equals(project.id).count();
+    // 1 source + 1 mask + 1 providerResult + 1 finalResult + 1 reference = 5 assets
+    expect(initialAssetCount).toBe(5);
+
+    // Run 2 reuses the reference asset from Run 1 via referenceAssetIds
+    const run2 = await saveRun({
+      projectId: project.id,
+      providerId: 'fake',
+      modelId: 'fake-model',
+      quality: 'standard',
+      prompt: 'second run with same reference',
+      editMode: 'strict-mask',
+      featherPixels: 0,
+      maskBlob,
+      providerResultBlob: resultBlob,
+      finalResultBlob: resultBlob,
+      referenceAssetIds: run1.referenceAssetIds,
+      elapsedMilliseconds: 100,
+    });
+
+    expect(run2.referenceAssetIds).toEqual(run1.referenceAssetIds);
+
+    const afterAssetCount = await db.assets.where('projectId').equals(project.id).count();
+    // Added 1 mask + 1 providerResult + 1 finalResult = +3 assets, 0 duplicate references!
+    expect(afterAssetCount).toBe(initialAssetCount + 3);
+
+    const refAssetCount = await db.assets
+      .where('projectId')
+      .equals(project.id)
+      .and(a => a.kind === 'reference')
+      .count();
+    expect(refAssetCount).toBe(1);
+  });
+
   it('lists projects sorted by updatedAt', async () => {
     const blob = new Blob(['img'], { type: 'image/png' });
     await createProject('Project A', blob, 100, 100);

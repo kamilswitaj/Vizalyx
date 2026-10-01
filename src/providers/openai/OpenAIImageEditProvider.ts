@@ -122,20 +122,26 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
     // 2. Mask conversion with inverted alpha for OpenAI API
     const openAiMaskBlob = await convertToOpenAIMaskBlob(preparedMask);
 
-    // 3. Build multipart request
+    // 3. Build multipart request conforming to GPT Image 2.5 API:
+    // - Source image must be FIRST in image[] because the mask applies to the first image
+    // - Reference images follow after the source image in image[]
+    // - Explicit size matching prepared geometry
+    // - Do not send response_format (unsupported for GPT Image 2.5, b64_json returned by default)
     const formData = new FormData();
-    formData.append('image', preparedSourceBlob, 'image.png');
+    formData.append('image[]', preparedSourceBlob, 'source.png');
+
+    if (request.referenceBlobs && request.referenceBlobs.length > 0) {
+      for (let i = 0; i < request.referenceBlobs.length; i++) {
+        formData.append('image[]', request.referenceBlobs[i]!, `reference-${i + 1}.png`);
+      }
+    }
+
     formData.append('mask', openAiMaskBlob, 'mask.png');
     formData.append('prompt', request.prompt);
     formData.append('model', request.modelId);
     formData.append('quality', request.quality);
-    formData.append('response_format', 'b64_json');
+    formData.append('size', `${geometry.targetWidth}x${geometry.targetHeight}`);
 
-    if (request.referenceBlobs && request.referenceBlobs.length > 0) {
-      for (let i = 0; i < request.referenceBlobs.length; i++) {
-        formData.append('reference_images', request.referenceBlobs[i]!, `reference-${i + 1}.png`);
-      }
-    }
 
     // 4. Send directly from browser to OpenAI
     let response: Response;

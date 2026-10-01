@@ -120,7 +120,7 @@ describe('OpenAIImageEditProvider', () => {
       expect(result.elapsedMilliseconds).toBeGreaterThanOrEqual(0);
     });
 
-    it('appends reference images to multipart FormData', async () => {
+    it('conforms to GPT Image 2.5 multipart contract (ordered image[], size, mask, no response_format)', async () => {
       const fakeB64 =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
       const mockResponse = {
@@ -133,7 +133,7 @@ describe('OpenAIImageEditProvider', () => {
         return Promise.resolve(
           new Response(JSON.stringify(mockResponse), {
             status: 200,
-            headers: { 'x-request-id': 'req-ref' },
+            headers: { 'x-request-id': 'req-contract' },
           })
         );
       });
@@ -145,8 +145,25 @@ describe('OpenAIImageEditProvider', () => {
       );
 
       expect(capturedBody).not.toBeNull();
-      const allRefs = (capturedBody as unknown as FormData).getAll('reference_images');
-      expect(allRefs).toHaveLength(1);
+      const body = capturedBody as unknown as FormData;
+
+      // 1. Input images: source must be first, references follow
+      const images = body.getAll('image[]');
+      expect(images).toHaveLength(2); // 1 source + 1 reference
+
+      // 2. Mask
+      expect(body.get('mask')).toBeInstanceOf(Blob);
+
+      // 3. Prompt, model, quality
+      expect(body.get('prompt')).toBe(validRequest.prompt);
+      expect(body.get('model')).toBe(validRequest.modelId);
+      expect(body.get('quality')).toBe(validRequest.quality);
+
+      // 4. Size explicit parameter
+      expect(body.get('size')).toMatch(/^\d+x\d+$/);
+
+      // 5. response_format must NOT be sent (unsupported for GPT Image 2.5)
+      expect(body.get('response_format')).toBeNull();
     });
 
     it('handles 401 error gracefully without exposing key', async () => {

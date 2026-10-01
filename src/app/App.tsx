@@ -8,7 +8,7 @@ import { ProjectListModal } from '../projects/ProjectListModal';
 import { InspectionViewer } from '../editor/inspection/InspectionViewer';
 import { strictComposite } from '../imaging/composite/StrictCompositor';
 import { featherMask } from '../imaging/masks/featherMask';
-import { rasterMaskToBlob } from '../imaging/masks/maskExport';
+import { rasterMaskToBlob, blobToRasterMaskOperation } from '../imaging/masks/maskExport';
 import {
   createProject,
   loadProject,
@@ -43,6 +43,7 @@ interface ReferenceImage {
   id: string;
   blob: Blob;
   objectUrl: string;
+  assetId?: string;
 }
 
 interface GenerateResult {
@@ -414,7 +415,9 @@ export function App(): React.ReactElement {
         const origPixels = compCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
 
         compCtx.clearRect(0, 0, sourceImage.width, sourceImage.height);
-        compCtx.drawImage(genBitmap, 0, 0);
+        compCtx.imageSmoothingEnabled = true;
+        compCtx.imageSmoothingQuality = 'high';
+        compCtx.drawImage(genBitmap, 0, 0, sourceImage.width, sourceImage.height);
         const genPixels = compCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
 
         origBitmap.close();
@@ -468,6 +471,13 @@ export function App(): React.ReactElement {
       if (activeProj) {
         try {
           const maskPng = await rasterMaskToBlob(mask);
+          const existingRefIds = referenceImages
+            .filter(r => Boolean(r.assetId))
+            .map(r => r.assetId!);
+          const newRefBlobs = referenceImages
+            .filter(r => !r.assetId)
+            .map(r => r.blob);
+
           const savedRun = await saveRun({
             projectId: activeProj.id,
             providerId: selectedProviderId,
@@ -479,11 +489,20 @@ export function App(): React.ReactElement {
             maskBlob: maskPng,
             providerResultBlob: editResult.resultBlob,
             finalResultBlob: finalBlob,
-            referenceBlobs: referenceImages.map(r => r.blob),
+            referenceAssetIds: existingRefIds,
+            referenceBlobs: newRefBlobs,
             elapsedMilliseconds: editResult.elapsedMilliseconds,
             providerRequestId: editResult.providerRequestId,
           });
           setRuns(prev => [savedRun, ...prev]);
+
+          // Update referenceImages state with assigned assetIds
+          setReferenceImages(prev =>
+            prev.map((ref, idx) => ({
+              ...ref,
+              assetId: savedRun.referenceAssetIds[idx] ?? ref.assetId,
+            }))
+          );
         } catch (saveErr) {
           console.warn('Failed to save run to IndexedDB:', saveErr);
         }
@@ -590,6 +609,24 @@ export function App(): React.ReactElement {
     setEditMode(run.editMode);
     setFeatherPixels(run.featherPixels);
 
+    // Restore historical mask
+    if (run.maskAssetId) {
+      void (async () => {
+        try {
+          const maskBlob = await getAssetBlob(run.maskAssetId);
+          if (maskBlob) {
+            const rasterOp = await blobToRasterMaskOperation(maskBlob);
+            setMaskState({
+              operations: [rasterOp],
+              historyIndex: 0,
+            });
+          }
+        } catch (maskErr) {
+          console.error('Failed to restore run mask:', maskErr);
+        }
+      })();
+    }
+
     if (run.referenceAssetIds && run.referenceAssetIds.length > 0) {
       void (async () => {
         const loadedRefs: ReferenceImage[] = [];
@@ -600,6 +637,7 @@ export function App(): React.ReactElement {
               id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               blob,
               objectUrl: URL.createObjectURL(blob),
+              assetId,
             });
           }
         }
@@ -614,6 +652,8 @@ export function App(): React.ReactElement {
         return [];
       });
     }
+
+    setCenterView('editor');
   }, []);
 
   const handleViewRunResult = useCallback(async (run: RunEntity) => {
@@ -651,6 +691,9 @@ export function App(): React.ReactElement {
       {/* Toolbar */}
       <header className={styles.toolbar}>
         <span className={styles.logo}>Vizalyx</span>
+        <button onClick={handleNewProject} title="Start new project / clear workspace">
+          New
+        </button>
         <button onClick={handleFileOpen}>Open</button>
         <input
           ref={fileInputRef}
