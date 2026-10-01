@@ -21,6 +21,23 @@ export interface AssetEntity {
   createdAt: number;
 }
 
+export interface RunUsageEntity {
+  inputTextTokens?: number;
+  inputImageTokens?: number;
+  outputImageTokens?: number;
+  totalTokens?: number;
+}
+
+export interface RunCostEntity {
+  usd: number;
+  pln?: number;
+  usdPlnRate?: number;
+  fxEffectiveDate?: string;
+  fxSource?: 'NBP';
+  fxStale?: boolean;
+  calculation: 'actual' | 'estimated';
+}
+
 export interface RunEntity {
   id: string;
   projectId: string;
@@ -39,6 +56,8 @@ export interface RunEntity {
   providerRequestId?: string;
   status: 'completed' | 'failed';
   error?: string;
+  usage?: RunUsageEntity;
+  cost?: RunCostEntity;
 }
 
 export class VizalyxDatabase extends Dexie {

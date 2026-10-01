@@ -366,6 +366,12 @@
   font-weight: 500;
 }
 
+.runItemCost {
+  color: #a0c0a0;
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+}
+
 .runItemPrompt {
   color: #eee;
   overflow: hidden;

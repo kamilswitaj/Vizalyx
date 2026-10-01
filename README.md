@@ -33,6 +33,14 @@ It enables precise, controllable image editing by combining visual selection too
   - **Fake (Dev/Test)**: Fully deterministic, offline provider for development and automated testing without API costs.
   - **OpenAI GPT Image 2.5**: Official browser-direct integration supporting `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` with `low`, `medium`, `high`, `xhigh`, and `max` qualities.
   - Conforms to OpenAI's official multipart contract: canonical PNG source image, matching PNG mask with alpha channel, ordered `image[]` (source image first, reference images following), explicit `size`, and automatic dimension normalization (multiples of 16, aspect ratios $1:3 - 3:1$, total pixel bounds).
+- **API Usage & Cost Tracking**:
+  - **Exact Token Accounting**: Captures the actual `usage` object returned by OpenAI Image API responses (image input tokens, text input tokens, output image tokens, total tokens) without estimates.
+  - **Versioned Pricing Schedule**: Pure calculation based on official OpenAI GPT Image 2.5 rates ($8/1M image input, $5/1M text input, $30/1M image output) preserved without internal rounding.
+  - **Live NBP USD/PLN Exchange Rate**: Queries National Bank of Poland (NBP Table A) average exchange rate directly from the client, cached per local day with stale offline fallback.
+  - **Non-Blocking Resilience**: Missing usage, network errors, or NBP service downtime never fail or block image generation.
+  - **Immutable Snapshots**: Each completed generation permanently records its USD cost, effective PLN exchange rate, rate date, and token usage into IndexedDB.
+  - **Costs & Usage Modal**: Accessible via the toolbar `Costs` button. Displays Total Spend, By Model & Quality, and By Edit Mode with scope toggle (Current Project vs. All Local Projects). Excludes Fake (Dev/Test) provider runs from paid totals.
+  - **Bilingual Currency Display**: Primary PLN formatted per Polish locale conventions (`0,26 zł`) with informative tooltip; secondary USD displayed with 4-5 decimals (`$0.0674`).
 - **Run History & Parameter/Mask Restoration**:
   - Automatically saves every generation as an immutable Run in IndexedDB.
   - **Load Params**: Restores exact prompt, provider, model, quality, feathering, reference images, and the exact raster mask from the historical run.

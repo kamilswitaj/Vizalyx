@@ -534,5 +534,72 @@ describe('OpenAIImageEditProvider', () => {
 
       await expect(promise).rejects.toThrow('Aborted');
     });
+
+    describe('Token usage capture & cost calculation', () => {
+      it('extracts structured usage and calculates USD cost from successful 200 response', async () => {
+        const mockB64Png =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              data: [{ b64_json: mockB64Png }],
+              usage: {
+                input_tokens: 5200,
+                input_tokens_details: {
+                  image_tokens: 5000,
+                  text_tokens: 200,
+                },
+                output_tokens: 1000,
+                output_tokens_details: {
+                  image_tokens: 1000,
+                },
+                total_tokens: 6200,
+              },
+            }),
+            {
+              status: 200,
+              headers: { 'x-request-id': 'req_usage_test_1' },
+            }
+          )
+        );
+
+        const result = await provider.edit(validRequest, { apiKey: 'sk-test' });
+
+        expect(result.usage).toBeDefined();
+        expect(result.usage?.inputImageTokens).toBe(5000);
+        expect(result.usage?.inputTextTokens).toBe(200);
+        expect(result.usage?.outputImageTokens).toBe(1000);
+        expect(result.usage?.totalTokens).toBe(6200);
+
+        // Expected cost calculation:
+        // 5000 * 8 / 1e6 = 0.04
+        // 200 * 5 / 1e6 = 0.001
+        // 1000 * 30 / 1e6 = 0.03
+        // Total = 0.071 USD
+        expect(result.costUsd).toBeCloseTo(0.071, 6);
+        expect(result.providerRequestId).toBe('req_usage_test_1');
+      });
+
+      it('gracefully succeeds when usage object is omitted by the API', async () => {
+        const mockB64Png =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              data: [{ b64_json: mockB64Png }],
+            }),
+            {
+              status: 200,
+            }
+          )
+        );
+
+        const result = await provider.edit(validRequest, { apiKey: 'sk-test' });
+
+        expect(result.resultBlob).toBeInstanceOf(Blob);
+        expect(result.usage).toBeUndefined();
+        expect(result.costUsd).toBeUndefined();
+      });
+    });
   });
 });

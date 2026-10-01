@@ -5,6 +5,7 @@ import type {
   ImageEditResult,
   ImageProviderDescriptor,
   ProviderCredentials,
+  TokenUsageDetails,
 } from '../contracts/types';
 import { convertToOpenAIMaskBlob } from './OpenAIMaskAdapter';
 import {
@@ -14,6 +15,10 @@ import {
   restoreResultToSourceSpace,
 } from '../../imaging/geometry/ImagePreparationPlan';
 import { parseOpenAIError, type OpenAIErrorPayload } from './openAiError';
+import {
+  getPricingForModel,
+  calculateOpenAiImageCostUsd,
+} from '../../accounting/pricing/openAiPricing';
 export { parseOpenAIError };
 
 const OPENAI_DESCRIPTOR: ImageProviderDescriptor = {
@@ -190,10 +195,53 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
       resultBlob = await restoreResultToSourceSpace(resultBlob, srcWidth, srcHeight);
     }
 
+    // 6. Extract actual OpenAI response token usage and calculate USD cost
+    let usage: TokenUsageDetails | undefined;
+    let costUsd: number | undefined;
+
+    if (json?.usage && typeof json.usage === 'object') {
+      const u = json.usage as {
+        input_tokens?: number;
+        input_tokens_details?: {
+          image_tokens?: number;
+          text_tokens?: number;
+        };
+        output_tokens?: number;
+        output_tokens_details?: {
+          image_tokens?: number;
+        };
+        total_tokens?: number;
+      };
+
+      const inputImageTokens = u.input_tokens_details?.image_tokens;
+      const inputTextTokens = u.input_tokens_details?.text_tokens;
+      const outputImageTokens = u.output_tokens_details?.image_tokens ?? u.output_tokens;
+      const totalTokens =
+        u.total_tokens ??
+        (u.input_tokens != null && u.output_tokens != null
+          ? u.input_tokens + u.output_tokens
+          : undefined);
+
+      usage = {
+        inputImageTokens,
+        inputTextTokens,
+        outputImageTokens,
+        totalTokens,
+      };
+
+      const pricing = getPricingForModel(request.modelId);
+      if (pricing) {
+        costUsd = calculateOpenAiImageCostUsd(usage, pricing);
+      }
+    }
+
     return {
       resultBlob,
       providerRequestId: response.headers.get('x-request-id') ?? undefined,
       elapsedMilliseconds: Date.now() - startTime,
+      usage,
+      costUsd,
+      rawUsage: json?.usage,
     };
   }
 }

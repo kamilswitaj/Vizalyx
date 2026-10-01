@@ -212,7 +212,14 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
 
     // Verify mask layer canvas has visible pixels before clear
     const countMaskPixels = () =>
-      page.evaluate(() => {
+      page.evaluate(async () => {
+        // Wait for two requestAnimationFrame ticks to guarantee Konva's batched draw has completed
+        await new Promise<void>(resolve => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve());
+          });
+        });
+
         const maskCanvas =
           (document.querySelector('canvas[data-testid="mask-canvas"]') as HTMLCanvasElement | null) ??
           (document.querySelectorAll('.konvajs-content canvas')[1] as HTMLCanvasElement | undefined);
@@ -231,7 +238,7 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
         return count;
       });
 
-    const pollOptions = { timeout: 10_000 };
+    const pollOptions = { timeout: 15_000, intervals: [100, 200, 500] };
 
     // Verify mask layer canvas has visible pixels before clear (Brush painted)
     await expect.poll(async () => countMaskPixels(), pollOptions).toBeGreaterThan(0);

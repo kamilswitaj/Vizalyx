@@ -1,0 +1,241 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  background: #232323;
+  border: 1px solid #444;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  color: #e0e0e0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #333;
+}
+
+.title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7aa3ff;
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.closeBtn:hover {
+  color: #fff;
+  background: #333;
+}
+
+.body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scopeSwitch {
+  display: flex;
+  background: #1a1a1a;
+  border-radius: 6px;
+  padding: 3px;
+  border: 1px solid #3a3a3a;
+  align-self: flex-start;
+  gap: 4px;
+}
+
+.scopeBtn {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.scopeBtnActive {
+  background: #3355cc;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  cursor: default;
+}
+
+.totalCard {
+  background: #1e1e1e;
+  border: 1px solid #383838;
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.totalPrimary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.totalPln {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #4ade80;
+}
+
+.totalUsd {
+  font-size: 1.05rem;
+  color: #a0a0a0;
+}
+
+.totalMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #777;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+.modelCard {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modelHeader {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #e0e0e0;
+  border-bottom: 1px solid #282828;
+  padding-bottom: 6px;
+}
+
+.modelStats {
+  font-size: 0.85rem;
+  color: #4ade80;
+}
+
+.qualityList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qualityRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: #bbb;
+  padding: 2px 0;
+}
+
+.qualityName {
+  font-family: monospace;
+  background: #282828;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.qualityCost {
+  color: #e0e0e0;
+}
+
+.editModeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.editModeCard {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editModeName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #bbb;
+}
+
+.editModeCost {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #4ade80;
+}
+
+.editModeMeta {
+  font-size: 0.75rem;
+  color: #777;
+}
+
+.note {
+  font-size: 0.72rem;
+  color: #666;
+  line-height: 1.4;
+  border-left: 2px solid #444;
+  padding-left: 8px;
+  margin-top: 4px;
+}
+
+.emptyState {
+  text-align: center;
+  color: #777;
+  padding: 30px 10px;
+  font-size: 0.9rem;
+}

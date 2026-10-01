@@ -16,7 +16,10 @@ import {
   saveRun,
   getAssetBlob,
 } from '../persistence/indexeddb/projectRepository';
-import type { ProjectEntity, RunEntity } from '../persistence/indexeddb/database';
+import type { ProjectEntity, RunEntity, RunCostEntity, RunUsageEntity } from '../persistence/indexeddb/database';
+import { CostSummaryModal } from '../accounting/ui/CostSummaryModal';
+import { formatRunCost } from '../accounting/formatting/costFormatting';
+import { nbpExchangeRateService } from '../accounting/fx/nbpExchangeRateService';
 import {
   applyOperation,
   clearMask,
@@ -56,6 +59,7 @@ interface GenerateResult {
   finalResultUrl: string;
   finalResultBlob: Blob;
   elapsedMilliseconds: number;
+  cost?: RunCostEntity;
 }
 
 // Global provider registry instance
@@ -104,6 +108,7 @@ export function App(): React.ReactElement {
   const [currentProject, setCurrentProject] = useState<ProjectEntity | null>(null);
   const [runs, setRuns] = useState<RunEntity[]>([]);
   const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const [isCostsOpen, setIsCostsOpen] = useState(false);
   const currentProjectRef = useRef<ProjectEntity | null>(null);
   currentProjectRef.current = currentProject;
 
@@ -449,6 +454,43 @@ export function App(): React.ReactElement {
         return;
       }
 
+      // Extract usage & calculate cost snapshot (non-blocking FX lookup)
+      const runUsage: RunUsageEntity | undefined = editResult.usage
+        ? {
+            inputTextTokens: editResult.usage.inputTextTokens,
+            inputImageTokens: editResult.usage.inputImageTokens,
+            outputImageTokens: editResult.usage.outputImageTokens,
+            totalTokens: editResult.usage.totalTokens,
+          }
+        : undefined;
+
+      let runCost: RunCostEntity | undefined;
+      if (typeof editResult.costUsd === 'number') {
+        let exchangeRate = null;
+        try {
+          exchangeRate = await nbpExchangeRateService.getUsdPlnRate();
+        } catch (fxErr) {
+          console.warn('NBP exchange rate retrieval failed (non-blocking):', fxErr);
+        }
+
+        const usd = editResult.costUsd;
+        const pln = exchangeRate ? usd * exchangeRate.rate : undefined;
+
+        runCost = {
+          usd,
+          pln,
+          usdPlnRate: exchangeRate?.rate,
+          fxEffectiveDate: exchangeRate?.effectiveDate,
+          fxSource: exchangeRate ? 'NBP' : undefined,
+          fxStale: exchangeRate?.isStale,
+          calculation: 'actual',
+        };
+      }
+
+      if (generationIdRef.current !== currentGenId) {
+        return;
+      }
+
       const providerUrl = URL.createObjectURL(editResult.resultBlob);
       const finalUrl =
         currentMode === 'strict-mask' ? URL.createObjectURL(finalBlob) : providerUrl;
@@ -463,6 +505,7 @@ export function App(): React.ReactElement {
         finalResultUrl: finalUrl,
         finalResultBlob: finalBlob,
         elapsedMilliseconds: editResult.elapsedMilliseconds,
+        cost: runCost,
       });
       setCenterView('inspect');
 
@@ -490,6 +533,8 @@ export function App(): React.ReactElement {
             references,
             elapsedMilliseconds: editResult.elapsedMilliseconds,
             providerRequestId: editResult.providerRequestId,
+            usage: runUsage,
+            cost: runCost,
           });
           setRuns(prev => [savedRun, ...prev]);
 
@@ -674,6 +719,7 @@ export function App(): React.ReactElement {
           finalResultUrl: fUrl,
           finalResultBlob: fBlob,
           elapsedMilliseconds: run.elapsedMilliseconds,
+          cost: run.cost,
         };
       });
       setCenterView('inspect');
@@ -716,6 +762,7 @@ export function App(): React.ReactElement {
         >
           Redo
         </button>
+        <button onClick={() => setIsCostsOpen(true)}>Costs</button>
         <button onClick={() => setIsSettingsOpen(true)}>
           Settings {openAiKey ? '●' : ''}
         </button>
@@ -1041,6 +1088,7 @@ export function App(): React.ReactElement {
                   ? `Strict Mask, ${result.featherPixels ?? 0}px feather`
                   : 'AI Mask'}
                 )
+                {result.cost ? ` · ${formatRunCost(result.cost)}` : ''}
               </div>
               <div className={styles.resultImages}>
                 <div>
@@ -1078,8 +1126,21 @@ export function App(): React.ReactElement {
                 {runs.map(run => (
                   <div key={run.id} className={styles.runItem}>
                     <div className={styles.runItemHeader}>
-                      <span className={styles.runItemMeta}>{run.modelId}</span>
+                      <span className={styles.runItemMeta}>
+                        {run.modelId === 'gpt-image-2.5-sunburst'
+                          ? 'Sunburst'
+                          : run.modelId === 'gpt-image-2.5-flare'
+                          ? 'Flare'
+                          : run.modelId}{' '}
+                        · {run.quality} · {run.editMode === 'strict-mask' ? 'Strict Mask' : 'AI Mask'}
+                      </span>
                       <span>{new Date(run.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <div className={styles.runItemCost}>
+                      {(run.elapsedMilliseconds / 1000).toFixed(1)} s
+                      {run.providerId === 'fake' || run.modelId === 'fake-model'
+                        ? ' · Dev/Free'
+                        : ` · ${formatRunCost(run.cost)}`}
                     </div>
                     <div className={styles.runItemPrompt} title={run.prompt}>
                       {run.prompt}
@@ -1124,6 +1185,14 @@ export function App(): React.ReactElement {
         onClose={() => setIsProjectsOpen(false)}
         onSelectProject={handleSelectProject}
         onNewProject={handleNewProject}
+      />
+
+      {/* Cost Summary Modal */}
+      <CostSummaryModal
+        isOpen={isCostsOpen}
+        onClose={() => setIsCostsOpen(false)}
+        currentProjectRuns={runs}
+        currentProjectName={currentProject?.name}
       />
     </div>
   );

@@ -3,6 +3,8 @@ import {
   type ProjectEntity,
   type AssetEntity,
   type RunEntity,
+  type RunUsageEntity,
+  type RunCostEntity,
 } from './database';
 
 function generateId(): string {
@@ -40,6 +42,8 @@ export interface SaveRunInput {
   providerRequestId?: string;
   status?: 'completed' | 'failed';
   error?: string;
+  usage?: RunUsageEntity;
+  cost?: RunCostEntity;
 }
 
 export async function createProject(
@@ -209,6 +213,8 @@ export async function saveRun(input: SaveRunInput): Promise<RunEntity> {
     providerRequestId: input.providerRequestId,
     status: input.status ?? 'completed',
     error: input.error,
+    usage: input.usage,
+    cost: input.cost,
   };
 
   await db.transaction('rw', [db.projects, db.assets, db.runs], async () => {

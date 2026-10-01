@@ -45,10 +45,23 @@ export interface ImageEditRequest {
   readonly quality: string;
 }
 
+/**
+ * Provider-neutral token usage details.
+ */
+export interface TokenUsageDetails {
+  readonly inputTextTokens?: number;
+  readonly inputImageTokens?: number;
+  readonly outputImageTokens?: number;
+  readonly totalTokens?: number;
+}
+
 export interface ImageEditResult {
   readonly resultBlob: Blob;
   readonly providerRequestId?: string;
   readonly elapsedMilliseconds: number;
+  readonly usage?: TokenUsageDetails;
+  readonly costUsd?: number;
+  readonly rawUsage?: unknown;
 }
 
 export interface ImageEditProvider {

@@ -281,4 +281,60 @@ describe('projectRepository', () => {
     const remainingRuns = await db.runs.where('projectId').equals(project.id).count();
     expect(remainingRuns).toBe(0);
   });
+
+  it('saves and loads run with token usage and immutable cost snapshot', async () => {
+    const sourceBlob = new Blob(['source'], { type: 'image/png' });
+    const { project } = await createProject('Accounting Project', sourceBlob, 512, 512);
+
+    const maskBlob = new Blob(['mask'], { type: 'image/png' });
+    const resBlob = new Blob(['res'], { type: 'image/png' });
+
+    await saveRun({
+      projectId: project.id,
+      providerId: 'openai',
+      modelId: 'gpt-image-2.5-sunburst',
+      quality: 'high',
+      prompt: 'repaint the wall yellow',
+      editMode: 'strict-mask',
+      featherPixels: 4,
+      maskBlob,
+      providerResultBlob: resBlob,
+      finalResultBlob: resBlob,
+      elapsedMilliseconds: 14200,
+      usage: {
+        inputImageTokens: 4800,
+        inputTextTokens: 150,
+        outputImageTokens: 1000,
+        totalTokens: 5950,
+      },
+      cost: {
+        usd: 0.06915,
+        pln: 0.27559,
+        usdPlnRate: 3.9854,
+        fxEffectiveDate: '2026-03-31',
+        fxSource: 'NBP',
+        calculation: 'actual',
+      },
+    });
+
+    const loaded = await loadProject(project.id);
+    expect(loaded?.runs).toHaveLength(1);
+    const loadedRun = loaded!.runs[0]!;
+
+    expect(loadedRun.usage).toEqual({
+      inputImageTokens: 4800,
+      inputTextTokens: 150,
+      outputImageTokens: 1000,
+      totalTokens: 5950,
+    });
+
+    expect(loadedRun.cost).toEqual({
+      usd: 0.06915,
+      pln: 0.27559,
+      usdPlnRate: 3.9854,
+      fxEffectiveDate: '2026-03-31',
+      fxSource: 'NBP',
+      calculation: 'actual',
+    });
+  });
 });
