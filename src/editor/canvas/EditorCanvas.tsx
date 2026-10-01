@@ -32,10 +32,19 @@ export function EditorCanvas({
 }: Props): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+  const maskLayerRef = useRef<Konva.Layer>(null);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
+
+  // Tag mask layer canvas for deterministic testability
+  useEffect(() => {
+    const canvasEl = maskLayerRef.current?.getCanvas()?._canvas;
+    if (canvasEl) {
+      canvasEl.setAttribute('data-testid', 'mask-canvas');
+    }
+  });
 
   // Active drawing stroke / rect
   const [isDrawing, setIsDrawing] = useState(false);
@@ -356,7 +365,7 @@ export function EditorCanvas({
         </Layer>
 
         {/* Layer 2: Lightweight Mask Visualization */}
-        <Layer listening={false} opacity={maskOpacity}>
+        <Layer ref={maskLayerRef} listening={false} opacity={maskOpacity}>
           {activeOps.map((op, index) => {
             if (op.type === 'rectangle') {
               return (

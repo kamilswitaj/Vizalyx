@@ -213,11 +213,16 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
     // Verify mask layer canvas has visible pixels before clear
     const countMaskPixels = () =>
       page.evaluate(() => {
-        const canvases = document.querySelectorAll('.konvajs-content canvas');
-        const maskCanvas = canvases[1] as HTMLCanvasElement | undefined;
-        if (!maskCanvas) return 0;
+        const maskCanvas =
+          (document.querySelector('canvas[data-testid="mask-canvas"]') as HTMLCanvasElement | null) ??
+          (document.querySelectorAll('.konvajs-content canvas')[1] as HTMLCanvasElement | undefined);
+        if (!maskCanvas) {
+          throw new Error('Mask canvas element not found in DOM');
+        }
         const ctx = maskCanvas.getContext('2d');
-        if (!ctx) return 0;
+        if (!ctx) {
+          throw new Error('Cannot get 2d context of mask canvas');
+        }
         const data = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
         let count = 0;
         for (let i = 3; i < data.length; i += 4) {
@@ -226,24 +231,26 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
         return count;
       });
 
+    const pollOptions = { timeout: 10_000 };
+
     // Verify mask layer canvas has visible pixels before clear (Brush painted)
-    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
+    await expect.poll(async () => countMaskPixels(), pollOptions).toBeGreaterThan(0);
 
     // Clear mask -> empty
     await clearBtn.click();
-    await expect.poll(async () => countMaskPixels()).toBe(0);
+    await expect.poll(async () => countMaskPixels(), pollOptions).toBe(0);
 
     // Undo Clear -> visible
     await undoBtn.click();
-    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
+    await expect.poll(async () => countMaskPixels(), pollOptions).toBeGreaterThan(0);
 
     // Redo Clear -> empty
     await redoBtn.click();
-    await expect.poll(async () => countMaskPixels()).toBe(0);
+    await expect.poll(async () => countMaskPixels(), pollOptions).toBe(0);
 
     // Undo Clear again so subsequent operations have mask context -> visible
     await undoBtn.click();
-    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
+    await expect.poll(async () => countMaskPixels(), pollOptions).toBeGreaterThan(0);
 
     // 6. Test Fit button
     const fitBtn = page.getByRole('button', { name: 'Fit' });

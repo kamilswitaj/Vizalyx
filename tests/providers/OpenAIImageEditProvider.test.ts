@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { OpenAIImageEditProvider } from '../../src/providers/openai/OpenAIImageEditProvider';
+import { OpenAIImageEditProvider, parseOpenAIError } from '../../src/providers/openai/OpenAIImageEditProvider';
 import type { ImageEditRequest } from '../../src/providers/contracts/types';
 
 describe('OpenAIImageEditProvider', () => {
@@ -75,7 +75,7 @@ describe('OpenAIImageEditProvider', () => {
       globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 429 }));
       const res = await provider.validateCredentials({ apiKey: 'sk-quota-key' });
       expect(res.valid).toBe(false);
-      expect(res.error).toMatch(/quota or rate limit/);
+      expect(res.error).toMatch(/request limit reached/);
     });
   });
 
@@ -322,16 +322,198 @@ describe('OpenAIImageEditProvider', () => {
       );
     });
 
-    it('handles 429 quota exceeded error gracefully', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: { message: 'You exceeded your current quota' } }), {
-          status: 429,
-        })
-      );
+    describe('OpenAI error diagnostics and 429 handling', () => {
+      it('handles credit_balance_exhausted payload with code and request ID', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: 'You have exhausted your credit balance. Please add funds to your account.',
+                type: 'credit_balance_exhausted',
+                code: 'credit_balance_exhausted',
+              },
+            }),
+            {
+              status: 429,
+              headers: { 'x-request-id': 'req_credit_123' },
+            }
+          )
+        );
 
-      await expect(provider.edit(validRequest, { apiKey: 'sk-secret-key-123' })).rejects.toThrow(
-        /rate limit or usage quota exceeded/
-      );
+        await expect(provider.edit(validRequest, { apiKey: 'sk-secret-key-123' })).rejects.toThrow(
+          /OpenAI credit balance exhausted: You have exhausted your credit balance.*\[Code: credit_balance_exhausted, Request ID: req_credit_123\]/
+        );
+      });
+
+      it('handles project_spend_limit_exceeded payload with code and request ID', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: 'Project monthly spend limit reached.',
+                type: 'project_spend_limit_exceeded',
+                code: 'project_spend_limit_exceeded',
+              },
+            }),
+            {
+              status: 429,
+              headers: { 'x-request-id': 'req_spend_456' },
+            }
+          )
+        );
+
+        await expect(provider.edit(validRequest, { apiKey: 'sk-secret-key-123' })).rejects.toThrow(
+          /OpenAI project spend limit exceeded: Project monthly spend limit reached.*\[Code: project_spend_limit_exceeded, Request ID: req_spend_456\]/
+        );
+      });
+
+      it('handles real rate limit payload (RPM / requests limit)', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: 'Rate limit reached for requests per minute (RPM). Please slow down.',
+                type: 'requests',
+                code: 'rate_limit_exceeded',
+              },
+            }),
+            {
+              status: 429,
+              headers: { 'x-request-id': 'req_rate_789' },
+            }
+          )
+        );
+
+        await expect(provider.edit(validRequest, { apiKey: 'sk-secret-key-123' })).rejects.toThrow(
+          /OpenAI rate limit exceeded: Rate limit reached for requests per minute.*\[Code: rate_limit_exceeded, Request ID: req_rate_789\]/
+        );
+      });
+
+      it('handles unknown 429 payload preserving message and status/type without collapsing', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: 'Custom throttle from proxy',
+                type: 'custom_throttle',
+                code: null,
+              },
+            }),
+            {
+              status: 429,
+              headers: { 'x-request-id': 'req_custom_999' },
+            }
+          )
+        );
+
+        const errorPromise = provider.edit(validRequest, { apiKey: 'sk-secret-key-123' });
+        await expect(errorPromise).rejects.toThrow(
+          /OpenAI request limit reached \(HTTP 429\): Custom throttle from proxy.*\[Type: custom_throttle, Request ID: req_custom_999\]/
+        );
+        // Guarantee it does NOT collapse into the old generic string
+        await expect(errorPromise).rejects.not.toThrow(
+          'OpenAI rate limit or usage quota exceeded.'
+        );
+      });
+
+      it('handles organization_spend_limit_exceeded and organization_usage_limit_exceeded', () => {
+        const orgSpend = parseOpenAIError(
+          429,
+          {
+            error: {
+              message: 'Organization spend limit reached.',
+              type: 'organization_spend_limit_exceeded',
+              code: 'organization_spend_limit_exceeded',
+            },
+          },
+          'req_org_1'
+        );
+        expect(orgSpend).toContain('OpenAI organization spend limit exceeded');
+        expect(orgSpend).toContain('Code: organization_spend_limit_exceeded');
+        expect(orgSpend).toContain('Request ID: req_org_1');
+
+        const orgUsage = parseOpenAIError(
+          429,
+          {
+            error: {
+              message: 'Organization usage limit reached.',
+              type: 'organization_usage_limit_exceeded',
+              code: 'organization_usage_limit_exceeded',
+            },
+          },
+          'req_org_2'
+        );
+        expect(orgUsage).toContain('OpenAI organization usage limit exceeded');
+        expect(orgUsage).toContain('Code: organization_usage_limit_exceeded');
+      });
+
+      it('handles insufficient_quota payload separately', () => {
+        const quotaErr = parseOpenAIError(
+          429,
+          {
+            error: {
+              message: 'You exceeded your current quota.',
+              type: 'insufficient_quota',
+              code: 'insufficient_quota',
+            },
+          },
+          'req_quota_1'
+        );
+        expect(quotaErr).toContain('OpenAI quota exceeded (insufficient quota)');
+        expect(quotaErr).toContain('Code: insufficient_quota');
+        expect(quotaErr).toContain('Request ID: req_quota_1');
+      });
+
+      it('never includes or leaks API key in error messages', async () => {
+        const secretKey = 'sk-super-secret-production-key-1234567890';
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: `Failed request with key ${secretKey}`,
+                type: 'invalid_request',
+                code: 'bad_request',
+              },
+            }),
+            {
+              status: 400,
+            }
+          )
+        );
+
+        let caughtMessage = '';
+        try {
+          await provider.edit(validRequest, { apiKey: secretKey });
+        } catch (e) {
+          caughtMessage = (e as Error).message;
+        }
+
+        expect(caughtMessage).not.toContain(secretKey);
+        expect(caughtMessage).toContain('[REDACTED]');
+      });
+
+      it('validateCredentials also preserves structured diagnostics for 429', async () => {
+        globalThis.fetch = vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              error: {
+                message: 'Credit balance exhausted.',
+                type: 'credit_balance_exhausted',
+                code: 'credit_balance_exhausted',
+              },
+            }),
+            {
+              status: 429,
+              headers: { 'x-request-id': 'req_val_123' },
+            }
+          )
+        );
+
+        const res = await provider.validateCredentials({ apiKey: 'sk-test' });
+        expect(res.valid).toBe(false);
+        expect(res.error).toContain('OpenAI credit balance exhausted');
+        expect(res.error).toContain('Request ID: req_val_123');
+      });
     });
 
     it('respects AbortSignal', async () => {

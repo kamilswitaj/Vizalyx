@@ -13,6 +13,8 @@ import {
   resizeRasterMask,
   restoreResultToSourceSpace,
 } from '../../imaging/geometry/ImagePreparationPlan';
+import { parseOpenAIError, type OpenAIErrorPayload } from './openAiError';
+export { parseOpenAIError };
 
 const OPENAI_DESCRIPTOR: ImageProviderDescriptor = {
   id: 'openai',
@@ -72,15 +74,16 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
         return { valid: true };
       }
 
-      if (response.status === 401) {
-        return { valid: false, error: 'Invalid API key. Please check your OpenAI credentials.' };
+      let errorPayload: OpenAIErrorPayload | null = null;
+      try {
+        errorPayload = (await response.json()) as OpenAIErrorPayload;
+      } catch {
+        // Fallback
       }
 
-      if (response.status === 429) {
-        return { valid: false, error: 'OpenAI quota or rate limit exceeded for this account.' };
-      }
-
-      return { valid: false, error: `Validation failed with status ${response.status}` };
+      const requestId = response.headers.get('x-request-id');
+      const errorMsg = parseOpenAIError(response.status, errorPayload, requestId);
+      return { valid: false, error: errorMsg };
     } catch (e) {
       return {
         valid: false,
@@ -162,22 +165,15 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
     }
 
     if (!response.ok) {
-      let errorMsg = `OpenAI API error (${response.status})`;
+      let errorPayload: OpenAIErrorPayload | null = null;
       try {
-        const errJson = await response.json();
-        if (errJson?.error?.message) {
-          errorMsg = errJson.error.message;
-        }
+        errorPayload = (await response.json()) as OpenAIErrorPayload;
       } catch {
-        // Fallback to status text
+        // Fallback to empty
       }
 
-      if (response.status === 401) {
-        throw new Error('OpenAI authentication failed: Invalid API key.');
-      }
-      if (response.status === 429) {
-        throw new Error('OpenAI rate limit or usage quota exceeded.');
-      }
+      const requestId = response.headers.get('x-request-id');
+      const errorMsg = parseOpenAIError(response.status, errorPayload, requestId);
       throw new Error(errorMsg);
     }
 
