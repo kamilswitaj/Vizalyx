@@ -64,7 +64,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173/Vizalyx/` in your browser.
+Open `http://localhost:5173/` in your browser.
 
 ### Verification & Testing
 
@@ -86,16 +86,21 @@ npm run build
 
 ## GitHub Pages Deployment
 
-Vizalyx is configured to deploy automatically via GitHub Actions upon every push to the `main` branch (see `.github/workflows/deploy.yml`).
+Vizalyx is configured to deploy automatically via GitHub Actions upon every push to the `main` branch (see `.github/workflows/ci.yml`).
 
-### Required One-Time Setup in GitHub:
+### Custom Domain & GitHub Pages Setup:
 
 1. Open your repository on GitHub: `https://github.com/kamilswitaj/Vizalyx`
 2. Navigate to **Settings** $\rightarrow$ **Pages**.
-3. Under **Build and deployment** $\rightarrow$ **Source**, change the selection from *"Deploy from a branch"* to **"GitHub Actions"**.
-4. The deployment workflow will automatically publish the static PWA to:
+3. Under **Build and deployment** $\rightarrow$ **Source**, select **"GitHub Actions"**.
+4. Under **Custom domain**, enter:
    ```
-   https://kamilswitaj.github.io/Vizalyx/
+   vizalyx.izabelaswitaj.pl
+   ```
+   (A `CNAME` file is provided in `public/CNAME` and included in every build artifact).
+5. The deployment workflow will automatically publish the static PWA to:
+   ```
+   https://vizalyx.izabelaswitaj.pl/
    ```
 
 ---
