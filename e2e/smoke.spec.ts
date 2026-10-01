@@ -226,23 +226,24 @@ test.describe('Vizalyx M1 E2E Smoke Test', () => {
         return count;
       });
 
-    expect(await countMaskPixels()).toBeGreaterThan(0);
+    // Verify mask layer canvas has visible pixels before clear (Brush painted)
+    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
 
-    // Clear mask
+    // Clear mask -> empty
     await clearBtn.click();
-    expect(await countMaskPixels()).toBe(0);
+    await expect.poll(async () => countMaskPixels()).toBe(0);
 
-    // Undo Clear restores the previous mask visualization
+    // Undo Clear -> visible
     await undoBtn.click();
-    expect(await countMaskPixels()).toBeGreaterThan(0);
+    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
 
-    // Redo Clear empties the mask visualization again
+    // Redo Clear -> empty
     await redoBtn.click();
-    expect(await countMaskPixels()).toBe(0);
+    await expect.poll(async () => countMaskPixels()).toBe(0);
 
-    // Undo Clear again so subsequent operations have mask context
+    // Undo Clear again so subsequent operations have mask context -> visible
     await undoBtn.click();
-    expect(await countMaskPixels()).toBeGreaterThan(0);
+    await expect.poll(async () => countMaskPixels()).toBeGreaterThan(0);
 
     // 6. Test Fit button
     const fitBtn = page.getByRole('button', { name: 'Fit' });
