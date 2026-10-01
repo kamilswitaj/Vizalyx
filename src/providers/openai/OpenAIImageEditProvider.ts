@@ -198,6 +198,7 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
     // 6. Extract actual OpenAI response token usage and calculate USD cost
     let usage: TokenUsageDetails | undefined;
     let costUsd: number | undefined;
+    let pricingId: string | undefined;
 
     if (json?.usage && typeof json.usage === 'object') {
       const u = json.usage as {
@@ -232,6 +233,7 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
       const pricing = getPricingForModel(request.modelId);
       if (pricing) {
         costUsd = calculateOpenAiImageCostUsd(usage, pricing);
+        pricingId = pricing.pricingId;
       }
     }
 
@@ -241,6 +243,7 @@ export class OpenAIImageEditProvider implements ImageEditProvider {
       elapsedMilliseconds: Date.now() - startTime,
       usage,
       costUsd,
+      pricingId,
       rawUsage: json?.usage,
     };
   }

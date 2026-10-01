@@ -36,6 +36,7 @@ export interface RunCostEntity {
   fxSource?: 'NBP';
   fxStale?: boolean;
   calculation: 'actual' | 'estimated';
+  pricingId?: string;
 }
 
 export interface RunEntity {

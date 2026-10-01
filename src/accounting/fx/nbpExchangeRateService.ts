@@ -29,6 +29,8 @@ export class NbpExchangeRateService {
     this.fetchFn = customFetch ?? (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : fetch);
   }
 
+  private inFlightPromise: Promise<ExchangeRate | null> | null = null;
+
   private getTodayLocalDateString(): string {
     const d = new Date();
     const year = d.getFullYear();
@@ -37,6 +39,11 @@ export class NbpExchangeRateService {
     return `${year}-${month}-${day}`;
   }
 
+  /**
+   * Synchronously reads the cached rate from local storage.
+   * If the rate is from a prior calendar day, it is returned marked as stale.
+   * Never blocks or makes network calls.
+   */
   public getCachedRate(): ExchangeRate | null {
     if (!this.storage) return null;
     try {
@@ -44,12 +51,28 @@ export class NbpExchangeRateService {
       if (!raw) return null;
       const parsed = JSON.parse(raw) as CachedRateRecord;
       if (parsed?.rate?.rate && parsed?.rate?.effectiveDate) {
-        return parsed.rate;
+        const today = this.getTodayLocalDateString();
+        const isStale = parsed.fetchedAtLocalDate !== today || Boolean(parsed.rate.isStale);
+        return {
+          ...parsed.rate,
+          isStale,
+        };
       }
     } catch {
       // Ignore corrupted storage
     }
     return null;
+  }
+
+  /**
+   * Prefetches the latest NBP rate in the background without blocking.
+   * Deduplicates concurrent background requests.
+   */
+  public prefetch(): void {
+    if (this.inFlightPromise) return;
+    this.inFlightPromise = this.getUsdPlnRate().finally(() => {
+      this.inFlightPromise = null;
+    });
   }
 
   private getCachedRecord(): CachedRateRecord | null {

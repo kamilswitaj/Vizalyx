@@ -1,12 +1,21 @@
 import type { RunEntity } from '../../persistence/indexeddb/database';
 
 export interface CostSummaryMetric {
-  readonly runCount: number;
-  readonly paidRunCount: number;
+  readonly totalRuns: number;
+  readonly paidRuns: number;
+  readonly freeDevRuns: number;
+  readonly unknownCostRuns: number;
+  readonly plnPricedRuns: number;
   readonly totalUsd: number;
   readonly totalPln: number;
   readonly averageUsd: number;
   readonly averagePln: number;
+  readonly missingPlnRuns: number;
+  readonly isPlnCoverageComplete: boolean;
+
+  // Convenience aliases for backward compatibility
+  readonly runCount: number;
+  readonly paidRunCount: number;
 }
 
 export interface QualityCostSummary extends CostSummaryMetric {
@@ -24,13 +33,7 @@ export interface EditModeCostSummary extends CostSummaryMetric {
   readonly displayName: string;
 }
 
-export interface CostAggregationResult {
-  readonly totalRuns: number;
-  readonly paidRuns: number;
-  readonly totalUsd: number;
-  readonly totalPln: number;
-  readonly averageUsd: number;
-  readonly averagePln: number;
+export interface CostAggregationResult extends CostSummaryMetric {
   readonly byModel: ModelCostSummary[];
   readonly byEditMode: EditModeCostSummary[];
 }
@@ -43,87 +46,107 @@ function getModelDisplayName(modelId: string): string {
 }
 
 /**
- * Aggregates token usage and costs from a collection of runs.
- * Excludes Fake Provider runs from paid cost totals.
+ * Computes accounting metrics for a set of runs adhering to Vizalyx rules:
+ * - Fake provider runs = freeDevRuns.
+ * - Non-fake runs with USD cost = paidRuns.
+ * - Non-fake runs without cost = unknownCostRuns (NOT free/dev).
+ * - Runs with PLN conversion = plnPricedRuns.
+ * - averagePln divides ONLY by plnPricedRuns.
  */
-export function aggregateCosts(runs: readonly RunEntity[]): CostAggregationResult {
+export function computeCostSummaryMetric(runs: readonly RunEntity[]): CostSummaryMetric {
   let totalRuns = 0;
   let paidRuns = 0;
+  let freeDevRuns = 0;
+  let unknownCostRuns = 0;
+  let plnPricedRuns = 0;
   let totalUsd = 0;
   let totalPln = 0;
-
-  // Buckets for grouping
-  const modelMap = new Map<string, { modelId: string; runs: RunEntity[] }>();
-  const editModeMap = new Map<'ai-mask' | 'strict-mask', RunEntity[]>([
-    ['ai-mask', []],
-    ['strict-mask', []],
-  ]);
 
   for (const run of runs) {
     totalRuns++;
     const isFake = run.providerId === 'fake' || run.modelId === 'fake-model';
+    if (isFake) {
+      freeDevRuns++;
+      continue;
+    }
 
-    // Only paid runs contribute to cost totals
-    if (!isFake && run.cost && typeof run.cost.usd === 'number') {
-      paidRuns++;
-      totalUsd += run.cost.usd;
-      if (typeof run.cost.pln === 'number') {
-        totalPln += run.cost.pln;
-      }
+    const hasUsd = run.cost != null && typeof run.cost.usd === 'number' && !isNaN(run.cost.usd);
+    if (!hasUsd) {
+      unknownCostRuns++;
+      continue;
+    }
 
-      // Group by model
-      const existing = modelMap.get(run.modelId) ?? { modelId: run.modelId, runs: [] };
-      existing.runs.push(run);
-      modelMap.set(run.modelId, existing);
+    paidRuns++;
+    totalUsd += run.cost!.usd;
 
-      // Group by editMode
-      const modeRuns = editModeMap.get(run.editMode) ?? [];
-      modeRuns.push(run);
-      editModeMap.set(run.editMode, modeRuns);
+    const hasPln = typeof run.cost!.pln === 'number' && !isNaN(run.cost!.pln);
+    if (hasPln) {
+      plnPricedRuns++;
+      totalPln += run.cost!.pln!;
     }
   }
 
   const averageUsd = paidRuns > 0 ? totalUsd / paidRuns : 0;
-  const averagePln = paidRuns > 0 ? totalPln / paidRuns : 0;
+  const averagePln = plnPricedRuns > 0 ? totalPln / plnPricedRuns : 0;
+  const missingPlnRuns = paidRuns - plnPricedRuns;
+  const isPlnCoverageComplete = paidRuns > 0 && missingPlnRuns === 0;
 
-  // Format byModel
-  const byModel: ModelCostSummary[] = Array.from(modelMap.values()).map(m => {
-    let mUsd = 0;
-    let mPln = 0;
+  return {
+    totalRuns,
+    paidRuns,
+    freeDevRuns,
+    unknownCostRuns,
+    plnPricedRuns,
+    totalUsd,
+    totalPln,
+    averageUsd,
+    averagePln,
+    missingPlnRuns,
+    isPlnCoverageComplete,
+    runCount: totalRuns,
+    paidRunCount: paidRuns,
+  };
+}
+
+/**
+ * Aggregates token usage and costs from a collection of runs.
+ * Excludes Fake Provider runs from paid cost totals and tracks explicit coverage.
+ */
+export function aggregateCosts(runs: readonly RunEntity[]): CostAggregationResult {
+  const overall = computeCostSummaryMetric(runs);
+
+  // Group non-fake runs by model
+  const modelMap = new Map<string, RunEntity[]>();
+  for (const run of runs) {
+    const isFake = run.providerId === 'fake' || run.modelId === 'fake-model';
+    if (!isFake) {
+      const list = modelMap.get(run.modelId) ?? [];
+      list.push(run);
+      modelMap.set(run.modelId, list);
+    }
+  }
+
+  const byModel: ModelCostSummary[] = Array.from(modelMap.entries()).map(([modelId, mRuns]) => {
+    const modelMetric = computeCostSummaryMetric(mRuns);
+
+    // Group by quality within model
     const qualityMap = new Map<string, RunEntity[]>();
-
-    for (const r of m.runs) {
-      if (r.cost) {
-        mUsd += r.cost.usd;
-        if (r.cost.pln) mPln += r.cost.pln;
-      }
-      const qRuns = qualityMap.get(r.quality) ?? [];
-      qRuns.push(r);
-      qualityMap.set(r.quality, qRuns);
+    for (const r of mRuns) {
+      const qList = qualityMap.get(r.quality) ?? [];
+      qList.push(r);
+      qualityMap.set(r.quality, qList);
     }
 
-    const mPaidCount = m.runs.length;
-    const byQuality: QualityCostSummary[] = Array.from(qualityMap.entries()).map(([q, qRuns]) => {
-      let qUsd = 0;
-      let qPln = 0;
-      for (const qr of qRuns) {
-        if (qr.cost) {
-          qUsd += qr.cost.usd;
-          if (qr.cost.pln) qPln += qr.cost.pln;
-        }
+    const byQuality: QualityCostSummary[] = Array.from(qualityMap.entries()).map(
+      ([quality, qRuns]) => {
+        const qMetric = computeCostSummaryMetric(qRuns);
+        return {
+          ...qMetric,
+          quality,
+        };
       }
-      return {
-        quality: q,
-        runCount: qRuns.length,
-        paidRunCount: qRuns.length,
-        totalUsd: qUsd,
-        totalPln: qPln,
-        averageUsd: qRuns.length > 0 ? qUsd / qRuns.length : 0,
-        averagePln: qRuns.length > 0 ? qPln / qRuns.length : 0,
-      };
-    });
+    );
 
-    // Sort qualities standard: low -> medium -> high -> xhigh -> max
     const qualityOrder = ['low', 'medium', 'high', 'xhigh', 'max'];
     byQuality.sort((a, b) => {
       const idxA = qualityOrder.indexOf(a.quality);
@@ -133,49 +156,26 @@ export function aggregateCosts(runs: readonly RunEntity[]): CostAggregationResul
     });
 
     return {
-      modelId: m.modelId,
-      displayName: getModelDisplayName(m.modelId),
-      runCount: m.runs.length,
-      paidRunCount: mPaidCount,
-      totalUsd: mUsd,
-      totalPln: mPln,
-      averageUsd: mPaidCount > 0 ? mUsd / mPaidCount : 0,
-      averagePln: mPaidCount > 0 ? mPln / mPaidCount : 0,
+      ...modelMetric,
+      modelId,
+      displayName: getModelDisplayName(modelId),
       byQuality,
     };
   });
 
-  // Format byEditMode
+  // Group by edit mode (strict-mask vs ai-mask)
   const byEditMode: EditModeCostSummary[] = (['strict-mask', 'ai-mask'] as const).map(mode => {
-    const mRuns = editModeMap.get(mode) ?? [];
-    let mUsd = 0;
-    let mPln = 0;
-    for (const r of mRuns) {
-      if (r.cost) {
-        mUsd += r.cost.usd;
-        if (r.cost.pln) mPln += r.cost.pln;
-      }
-    }
-    const mCount = mRuns.length;
+    const modeRuns = runs.filter(r => r.editMode === mode);
+    const modeMetric = computeCostSummaryMetric(modeRuns);
     return {
+      ...modeMetric,
       editMode: mode,
       displayName: mode === 'strict-mask' ? 'Strict Mask' : 'AI Mask',
-      runCount: mCount,
-      paidRunCount: mCount,
-      totalUsd: mUsd,
-      totalPln: mPln,
-      averageUsd: mCount > 0 ? mUsd / mCount : 0,
-      averagePln: mCount > 0 ? mPln / mCount : 0,
     };
   });
 
   return {
-    totalRuns,
-    paidRuns,
-    totalUsd,
-    totalPln,
-    averageUsd,
-    averagePln,
+    ...overall,
     byModel,
     byEditMode,
   };

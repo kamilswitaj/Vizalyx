@@ -181,6 +181,18 @@ export function App(): React.ReactElement {
     };
   }, []);
 
+  // Prefetch NBP USD/PLN exchange rate in the background on startup
+  useEffect(() => {
+    nbpExchangeRateService.prefetch();
+  }, []);
+
+  // Prefetch when OpenAI provider becomes active
+  useEffect(() => {
+    if (selectedProviderId === 'openai') {
+      nbpExchangeRateService.prefetch();
+    }
+  }, [selectedProviderId]);
+
 
   const loadImage = useCallback(async (blob: Blob, existingProjectId?: string) => {
     // Cancel in-flight generation and invalidate generation ID
@@ -402,10 +414,14 @@ export function App(): React.ReactElement {
       const credentials = { apiKey: selectedProviderId === 'openai' ? openAiKey : '' };
       const editResult = await currentProvider.edit(request, credentials, abortController.signal);
 
-      // Invalidate if source image changed or cancelled
+      // Invalidate if source image changed or cancelled during provider edit
       if (generationIdRef.current !== currentGenId) {
         return;
       }
+
+      // Clear abort controller immediately: provider has succeeded,
+      // so Cancel can no longer discard this completed generation.
+      abortControllerRef.current = null;
 
       let finalBlob: Blob;
       if (currentMode === 'strict-mask') {
@@ -450,11 +466,7 @@ export function App(): React.ReactElement {
         finalBlob = editResult.resultBlob;
       }
 
-      if (generationIdRef.current !== currentGenId) {
-        return;
-      }
-
-      // Extract usage & calculate cost snapshot (non-blocking FX lookup)
+      // Extract usage & calculate cost snapshot (synchronous - never blocks or awaits FX)
       const runUsage: RunUsageEntity | undefined = editResult.usage
         ? {
             inputTextTokens: editResult.usage.inputTextTokens,
@@ -466,29 +478,25 @@ export function App(): React.ReactElement {
 
       let runCost: RunCostEntity | undefined;
       if (typeof editResult.costUsd === 'number') {
-        let exchangeRate = null;
-        try {
-          exchangeRate = await nbpExchangeRateService.getUsdPlnRate();
-        } catch (fxErr) {
-          console.warn('NBP exchange rate retrieval failed (non-blocking):', fxErr);
+        const cachedRate = nbpExchangeRateService.getCachedRate();
+        if (!cachedRate) {
+          // Trigger background refresh for future runs without waiting
+          nbpExchangeRateService.prefetch();
         }
 
         const usd = editResult.costUsd;
-        const pln = exchangeRate ? usd * exchangeRate.rate : undefined;
+        const pln = cachedRate ? usd * cachedRate.rate : undefined;
 
         runCost = {
           usd,
           pln,
-          usdPlnRate: exchangeRate?.rate,
-          fxEffectiveDate: exchangeRate?.effectiveDate,
-          fxSource: exchangeRate ? 'NBP' : undefined,
-          fxStale: exchangeRate?.isStale,
+          usdPlnRate: cachedRate?.rate,
+          fxEffectiveDate: cachedRate?.effectiveDate,
+          fxSource: cachedRate ? 'NBP' : undefined,
+          fxStale: cachedRate?.isStale,
           calculation: 'actual',
+          pricingId: editResult.pricingId,
         };
-      }
-
-      if (generationIdRef.current !== currentGenId) {
-        return;
       }
 
       const providerUrl = URL.createObjectURL(editResult.resultBlob);

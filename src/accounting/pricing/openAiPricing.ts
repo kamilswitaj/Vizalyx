@@ -1,6 +1,6 @@
 export interface OpenAiModelPricing {
-  readonly version: string;
-  readonly effectiveFrom: string; // ISO date string e.g. "2025-01-01"
+  readonly pricingId: string;
+  readonly verifiedAt: string; // ISO date string e.g. "2026-10-01"
   readonly modelIds: readonly string[];
   readonly inputImageUsdPerMillion: number;
   readonly inputTextUsdPerMillion: number;
@@ -8,23 +8,27 @@ export interface OpenAiModelPricing {
 }
 
 /**
- * Current official OpenAI GPT Image 2.5 pricing rates:
+ * Current verified OpenAI GPT Image 2.5 standard direct pricing rates:
  * - Image input: $8 per 1,000,000 tokens
  * - Text input: $5 per 1,000,000 tokens
  * - Image output: $30 per 1,000,000 tokens
+ * Note: Cached-input pricing does not apply to direct /v1/images/edits requests.
  * Applies to both Sunburst and Flare models.
  */
-export const OPENAI_GPT_IMAGE_PRICING_V1: OpenAiModelPricing = {
-  version: '2025-01-01',
-  effectiveFrom: '2025-01-01',
+export const OPENAI_GPT_IMAGE_PRICING_2026_10_01: OpenAiModelPricing = {
+  pricingId: 'openai-gpt-image-2.5-standard-2026-10-01',
+  verifiedAt: '2026-10-01',
   modelIds: ['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'],
   inputImageUsdPerMillion: 8,
   inputTextUsdPerMillion: 5,
   outputImageUsdPerMillion: 30,
 };
 
+// Backward-compatible alias for existing imports
+export const OPENAI_GPT_IMAGE_PRICING_V1 = OPENAI_GPT_IMAGE_PRICING_2026_10_01;
+
 export const PRICING_VERSIONS: readonly OpenAiModelPricing[] = [
-  OPENAI_GPT_IMAGE_PRICING_V1,
+  OPENAI_GPT_IMAGE_PRICING_2026_10_01,
 ];
 
 /**
@@ -32,6 +36,13 @@ export const PRICING_VERSIONS: readonly OpenAiModelPricing[] = [
  */
 export function getPricingForModel(modelId: string): OpenAiModelPricing | undefined {
   return PRICING_VERSIONS.find(p => p.modelIds.includes(modelId));
+}
+
+/**
+ * Resolves pricing schedule by explicit pricingId.
+ */
+export function getPricingById(pricingId: string): OpenAiModelPricing | undefined {
+  return PRICING_VERSIONS.find(p => p.pricingId === pricingId);
 }
 
 /**
@@ -48,7 +59,7 @@ export function calculateOpenAiImageCostUsd(
     inputTextTokens?: number;
     outputImageTokens?: number;
   },
-  pricing: OpenAiModelPricing = OPENAI_GPT_IMAGE_PRICING_V1
+  pricing: OpenAiModelPricing = OPENAI_GPT_IMAGE_PRICING_2026_10_01
 ): number {
   const inputImage = usage.inputImageTokens ?? 0;
   const inputText = usage.inputTextTokens ?? 0;

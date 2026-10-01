@@ -61,6 +61,7 @@ export interface ImageEditResult {
   readonly elapsedMilliseconds: number;
   readonly usage?: TokenUsageDetails;
   readonly costUsd?: number;
+  readonly pricingId?: string;
   readonly rawUsage?: unknown;
 }
 

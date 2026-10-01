@@ -233,6 +233,36 @@
   margin-top: 4px;
 }
 
+.plnCoverage {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fbbf24;
+}
+
+.plnWarning {
+  font-size: 0.78rem;
+  color: #fbbf24;
+  margin-top: -2px;
+}
+
+.modelPlnWarning {
+  font-size: 0.75rem;
+  color: #fbbf24;
+  margin-top: -2px;
+}
+
+.editModePlnCoverage {
+  font-size: 0.72rem;
+  font-weight: normal;
+  color: #fbbf24;
+}
+
+.editModePlnWarning {
+  font-size: 0.72rem;
+  color: #fbbf24;
+  margin-top: -2px;
+}
+
 .emptyState {
   text-align: center;
   color: #777;

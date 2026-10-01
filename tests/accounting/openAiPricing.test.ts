@@ -1,28 +1,49 @@
 import { describe, it, expect } from 'vitest';
 import {
+  OPENAI_GPT_IMAGE_PRICING_2026_10_01,
   OPENAI_GPT_IMAGE_PRICING_V1,
   calculateOpenAiImageCostUsd,
   getPricingForModel,
+  getPricingById,
+  type OpenAiModelPricing,
 } from '../../src/accounting/pricing/openAiPricing';
 
 describe('openAiPricing', () => {
-  describe('pricing schedule v1', () => {
-    it('defines correct official pricing rates for GPT Image 2.5', () => {
-      expect(OPENAI_GPT_IMAGE_PRICING_V1.inputImageUsdPerMillion).toBe(8);
-      expect(OPENAI_GPT_IMAGE_PRICING_V1.inputTextUsdPerMillion).toBe(5);
-      expect(OPENAI_GPT_IMAGE_PRICING_V1.outputImageUsdPerMillion).toBe(30);
-      expect(OPENAI_GPT_IMAGE_PRICING_V1.modelIds).toContain('gpt-image-2.5-sunburst');
-      expect(OPENAI_GPT_IMAGE_PRICING_V1.modelIds).toContain('gpt-image-2.5-flare');
+  describe('auditable pricing metadata', () => {
+    it('defines auditable pricingId and verifiedAt for GPT Image 2.5 standard direct pricing', () => {
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.pricingId).toBe(
+        'openai-gpt-image-2.5-standard-2026-10-01'
+      );
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.verifiedAt).toBe('2026-10-01');
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.inputImageUsdPerMillion).toBe(8);
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.inputTextUsdPerMillion).toBe(5);
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.outputImageUsdPerMillion).toBe(30);
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.modelIds).toContain('gpt-image-2.5-sunburst');
+      expect(OPENAI_GPT_IMAGE_PRICING_2026_10_01.modelIds).toContain('gpt-image-2.5-flare');
+
+      // V1 alias matches current verified pricing
+      expect(OPENAI_GPT_IMAGE_PRICING_V1).toBe(OPENAI_GPT_IMAGE_PRICING_2026_10_01);
     });
 
-    it('resolves pricing for supported models', () => {
+    it('resolves pricing for supported models with pricingId', () => {
       const sunburstPricing = getPricingForModel('gpt-image-2.5-sunburst');
       expect(sunburstPricing).toBeDefined();
+      expect(sunburstPricing?.pricingId).toBe('openai-gpt-image-2.5-standard-2026-10-01');
       expect(sunburstPricing?.inputImageUsdPerMillion).toBe(8);
 
       const flarePricing = getPricingForModel('gpt-image-2.5-flare');
       expect(flarePricing).toBeDefined();
+      expect(flarePricing?.pricingId).toBe('openai-gpt-image-2.5-standard-2026-10-01');
       expect(flarePricing?.outputImageUsdPerMillion).toBe(30);
+    });
+
+    it('resolves pricing by explicit pricingId', () => {
+      const pricing = getPricingById('openai-gpt-image-2.5-standard-2026-10-01');
+      expect(pricing).toBeDefined();
+      expect(pricing?.verifiedAt).toBe('2026-10-01');
+      expect(pricing?.outputImageUsdPerMillion).toBe(30);
+
+      expect(getPricingById('nonexistent-pricing')).toBeUndefined();
     });
 
     it('returns undefined for unknown models', () => {
@@ -70,6 +91,29 @@ describe('openAiPricing', () => {
       });
 
       expect(cost).toBeCloseTo(0.071, 6);
+    });
+
+    it('calculates using explicitly selected pricing schedule', () => {
+      const customPricing: OpenAiModelPricing = {
+        pricingId: 'custom-promo-2027-01-01',
+        verifiedAt: '2027-01-01',
+        modelIds: ['gpt-image-2.5-sunburst'],
+        inputImageUsdPerMillion: 4,
+        inputTextUsdPerMillion: 2.5,
+        outputImageUsdPerMillion: 15,
+      };
+
+      const cost = calculateOpenAiImageCostUsd(
+        {
+          inputImageTokens: 1_000_000,
+          inputTextTokens: 1_000_000,
+          outputImageTokens: 1_000_000,
+        },
+        customPricing
+      );
+
+      // 4 + 2.5 + 15 = 21.5
+      expect(cost).toBe(21.5);
     });
 
     it('returns 0 for all zero tokens', () => {

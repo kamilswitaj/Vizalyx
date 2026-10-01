@@ -80,7 +80,9 @@ export function CostSummaryModal({
             <div className={styles.emptyState}>No generation runs recorded in this scope.</div>
           ) : summary.paidRuns === 0 ? (
             <div className={styles.emptyState}>
-              {summary.totalRuns} local/dev run(s) recorded. No paid OpenAI generations in this scope.
+              {summary.freeDevRuns > 0 && `${summary.freeDevRuns} local/dev run(s) recorded. `}
+              {summary.unknownCostRuns > 0 && `${summary.unknownCostRuns} run(s) without cost metadata. `}
+              No paid generations with recorded cost in this scope.
             </div>
           ) : (
             <>
@@ -90,18 +92,27 @@ export function CostSummaryModal({
                 <div className={styles.totalPrimary}>
                   <div className={styles.totalPln} title={ESTIMATED_PLN_TOOLTIP}>
                     {formatPln(summary.totalPln)}
+                    {!summary.isPlnCoverageComplete && summary.paidRuns > 0 && (
+                      <span className={styles.plnCoverage}>
+                        {' '}({summary.plnPricedRuns}/{summary.paidRuns} runs)
+                      </span>
+                    )}
                   </div>
                   <div className={styles.totalUsd}>{formatUsd(summary.totalUsd)}</div>
                 </div>
+                {!summary.isPlnCoverageComplete && summary.paidRuns > 0 && (
+                  <div className={styles.plnWarning}>
+                    {summary.missingPlnRuns} {summary.missingPlnRuns === 1 ? 'run does' : 'runs do'} not have PLN conversion
+                  </div>
+                )}
                 <div className={styles.totalMeta}>
                   <span>
                     {summary.paidRuns} paid generation{summary.paidRuns === 1 ? '' : 's'}
-                    {summary.totalRuns > summary.paidRuns
-                      ? ` (${summary.totalRuns - summary.paidRuns} free/dev)`
-                      : ''}
+                    {summary.freeDevRuns > 0 ? ` · ${summary.freeDevRuns} free/dev` : ''}
+                    {summary.unknownCostRuns > 0 ? ` · ${summary.unknownCostRuns} unknown cost` : ''}
                   </span>
                   <span>
-                    Avg: {formatPln(summary.averagePln)} / run ({formatUsd(summary.averageUsd)})
+                    Avg: {summary.plnPricedRuns > 0 ? formatPln(summary.averagePln) : '— zł'} / run ({formatUsd(summary.averageUsd)})
                   </span>
                 </div>
               </div>
@@ -115,16 +126,36 @@ export function CostSummaryModal({
                       <div className={styles.modelHeader}>
                         <span>{model.displayName}</span>
                         <span className={styles.modelStats}>
-                          {formatPln(model.totalPln)} ({formatUsd(model.totalUsd)})
+                          {formatPln(model.totalPln)}
+                          {!model.isPlnCoverageComplete && model.paidRuns > 0 && (
+                            <span className={styles.plnCoverage}>
+                              {' '}({model.plnPricedRuns}/{model.paidRuns})
+                            </span>
+                          )}
+                          {' '}({formatUsd(model.totalUsd)})
                         </span>
                       </div>
+                      {!model.isPlnCoverageComplete && model.paidRuns > 0 && (
+                        <div className={styles.modelPlnWarning}>
+                          {model.missingPlnRuns} {model.missingPlnRuns === 1 ? 'run does' : 'runs do'} not have PLN conversion
+                        </div>
+                      )}
                       <div className={styles.qualityList}>
                         {model.byQuality.map(q => (
                           <div key={q.quality} className={styles.qualityRow}>
                             <span className={styles.qualityName}>{q.quality}</span>
-                            <span>{q.runCount} run{q.runCount === 1 ? '' : 's'}</span>
+                            <span>
+                              {q.paidRuns} paid run{q.paidRuns === 1 ? '' : 's'}
+                              {q.unknownCostRuns > 0 ? ` · ${q.unknownCostRuns} unknown` : ''}
+                            </span>
                             <span className={styles.qualityCost}>
-                              {formatPln(q.totalPln)}{' '}
+                              {formatPln(q.totalPln)}
+                              {!q.isPlnCoverageComplete && q.paidRuns > 0 && (
+                                <span className={styles.plnCoverage}>
+                                  {' '}({q.plnPricedRuns}/{q.paidRuns})
+                                </span>
+                              )}
+                              {' '}
                               <span style={{ color: '#777', fontSize: '0.75rem' }}>
                                 ({formatUsd(q.totalUsd)})
                               </span>
@@ -138,16 +169,29 @@ export function CostSummaryModal({
               )}
 
               {/* By Edit Mode */}
-              {summary.byEditMode.some(m => m.runCount > 0) && (
+              {summary.byEditMode.some(m => m.paidRuns > 0 || m.totalRuns > 0) && (
                 <div className={styles.section}>
                   <div className={styles.sectionTitle}>By Edit Mode</div>
                   <div className={styles.editModeGrid}>
                     {summary.byEditMode.map(m => (
                       <div key={m.editMode} className={styles.editModeCard}>
                         <div className={styles.editModeName}>{m.displayName}</div>
-                        <div className={styles.editModeCost}>{formatPln(m.totalPln)}</div>
+                        <div className={styles.editModeCost}>
+                          {formatPln(m.totalPln)}
+                          {!m.isPlnCoverageComplete && m.paidRuns > 0 && (
+                            <span className={styles.editModePlnCoverage}>
+                              {' '}({m.plnPricedRuns}/{m.paidRuns} runs)
+                            </span>
+                          )}
+                        </div>
+                        {!m.isPlnCoverageComplete && m.paidRuns > 0 && (
+                          <div className={styles.editModePlnWarning}>
+                            {m.missingPlnRuns} {m.missingPlnRuns === 1 ? 'run' : 'runs'} without PLN
+                          </div>
+                        )}
                         <div className={styles.editModeMeta}>
-                          {m.runCount} run{m.runCount === 1 ? '' : 's'} · {formatUsd(m.totalUsd)}
+                          {m.paidRuns} paid run{m.paidRuns === 1 ? '' : 's'} · {formatUsd(m.totalUsd)}
+                          {m.unknownCostRuns > 0 ? ` · ${m.unknownCostRuns} unknown` : ''}
                         </div>
                       </div>
                     ))}

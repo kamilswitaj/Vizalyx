@@ -314,6 +314,7 @@ describe('projectRepository', () => {
         fxEffectiveDate: '2026-03-31',
         fxSource: 'NBP',
         calculation: 'actual',
+        pricingId: 'openai-gpt-image-2.5-standard-2026-10-01',
       },
     });
 
@@ -328,6 +329,7 @@ describe('projectRepository', () => {
       totalTokens: 5950,
     });
 
+    // Verify pricing identifier and historical cost snapshot are immutably preserved
     expect(loadedRun.cost).toEqual({
       usd: 0.06915,
       pln: 0.27559,
@@ -335,6 +337,7 @@ describe('projectRepository', () => {
       fxEffectiveDate: '2026-03-31',
       fxSource: 'NBP',
       calculation: 'actual',
+      pricingId: 'openai-gpt-image-2.5-standard-2026-10-01',
     });
   });
 });

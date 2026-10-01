@@ -81,8 +81,91 @@ describe('NbpExchangeRateService', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('synchronously reads cached rate via getCachedRate without network call', () => {
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate()
+    ).padStart(2, '0')}`;
+
+    mockStorage.setItem(
+      'vizalyx_nbp_usd_pln_cache',
+      JSON.stringify({
+        rate: {
+          baseCurrency: 'USD',
+          quoteCurrency: 'PLN',
+          rate: 4.02,
+          effectiveDate: today,
+          source: 'NBP',
+        },
+        fetchedAtLocalDate: today,
+      })
+    );
+
+    const mockFetch = vi.fn();
+    const service = new NbpExchangeRateService(mockStorage, mockFetch as unknown as typeof fetch);
+
+    const cached = service.getCachedRate();
+    expect(cached).not.toBeNull();
+    expect(cached?.rate).toBe(4.02);
+    expect(cached?.isStale).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('getCachedRate marks rate as stale if fetched on a prior calendar day', () => {
+    mockStorage.setItem(
+      'vizalyx_nbp_usd_pln_cache',
+      JSON.stringify({
+        rate: {
+          baseCurrency: 'USD',
+          quoteCurrency: 'PLN',
+          rate: 3.91,
+          effectiveDate: '2026-01-01',
+          source: 'NBP',
+        },
+        fetchedAtLocalDate: '2026-01-01',
+      })
+    );
+
+    const service = new NbpExchangeRateService(mockStorage, vi.fn() as unknown as typeof fetch);
+    const cached = service.getCachedRate();
+    expect(cached).not.toBeNull();
+    expect(cached?.rate).toBe(3.91);
+    expect(cached?.isStale).toBe(true);
+  });
+
+  it('prefetch triggers background retrieval and deduplicates concurrent calls', async () => {
+    let resolvePromise: (value: unknown) => void = () => {};
+    const mockFetch = vi.fn().mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvePromise = resolve;
+        })
+    );
+
+    const service = new NbpExchangeRateService(mockStorage, mockFetch as unknown as typeof fetch);
+
+    // Call prefetch twice concurrently
+    service.prefetch();
+    service.prefetch();
+
+    // Only 1 fetch call should be initiated
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Resolve network request
+    resolvePromise({
+      ok: true,
+      json: async () => mockNbpResponse,
+    });
+
+    // Wait a tick for promise resolution
+    await new Promise(r => setTimeout(r, 10));
+
+    // Next prefetch after completion will be allowed
+    service.prefetch();
+    expect(mockFetch).toHaveBeenCalledTimes(1); // will hit cached rate since same day
+  });
+
   it('falls back to stale cached rate if NBP network request fails', async () => {
-    // Prime cache with previous day rate
     const d = new Date();
     d.setDate(d.getDate() - 1);
     const yesterday = d.toISOString().slice(0, 10);

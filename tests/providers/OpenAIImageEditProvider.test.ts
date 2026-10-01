@@ -577,6 +577,7 @@ describe('OpenAIImageEditProvider', () => {
         // 1000 * 30 / 1e6 = 0.03
         // Total = 0.071 USD
         expect(result.costUsd).toBeCloseTo(0.071, 6);
+        expect(result.pricingId).toBe('openai-gpt-image-2.5-standard-2026-10-01');
         expect(result.providerRequestId).toBe('req_usage_test_1');
       });
 
